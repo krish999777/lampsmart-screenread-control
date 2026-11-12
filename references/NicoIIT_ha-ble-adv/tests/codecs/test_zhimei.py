@@ -1,0 +1,1030 @@
+# ruff: noqa: S101
+"""Zhi Mei pro Unit Tests."""
+
+import pytest
+from ble_adv.codecs.models import BleAdvCodec, BleAdvEncCmd, BleAdvEntAttr
+
+from . import CODECS, _TestEncoderBase, _TestEncoderFull, _TestEncoderFullAll
+
+
+@pytest.mark.parametrize(
+    _TestEncoderBase.PARAM_NAMES,
+    [
+        ("zhimei_fan_v0", 0x03, "55.02.01.02.C0.B4.AA.66.55.33"),
+        ("zhimei_v2", 0x03, "F9.08.49.B2.CE.2C.81.3B.6B.90.08.CE.EF.3D.6F.C8.10.11.12.13.14.15.16.17.18.19"),
+        ("zhiguang2_v2", 0xFF, "F90849B2CE2C581FB1B42A8F121967FD10111213141516171819"),
+        ("zhimei_v1b", 0xFF, "58.55.18.48.46.4B.4A.1C.AB.1F.B8.0E.B7.E1.7D.98.82.31.A5.7E.7E.DB.68.10.11.12.13.14.15"),
+        ("zhimei_vr1", 0xFF, "FF.FF.FF.48.46.4B.4A.9E.CD.8F.53.3F.22.4C.F8.FF.9B.F3.21.06.EE.37.0F.FF.FF.FF.FF.FF.FF"),
+        ("zhimei_fan_vr0", 0x00, "55.FF.63.01.6A.10.00.00.00.32"),
+        ("zhimei_fan_vr1", 0xFF, "1F.61.3E.48.46.4B.4A.16.77.19.1F.72.BD.E7.D5.77.36.70.52.67.23.79.0C.10.11.12.13.14.15"),
+        ("zhimei_fan_vr1", 0xFF, "5D.01.6A.48.46.4B.4A.7B.38.FC.5C.09.58.82.66.DC.29.CB.51.76.58.A0.9A.10.11.12.13.14.15"),
+        ("zhimei_fan_v1b", 0xFF, "00000048464B4AB27A4003AA214B85136D0E1F347440D9101112131415"),
+    ],
+)
+class TestEncoderZhimei(_TestEncoderBase):
+    """Zhi Mei Encoder tests."""
+
+
+@pytest.mark.parametrize(
+    _TestEncoderBase.PARAM_NAMES,
+    [
+        ("zhimei_fan_v1", 0x03, "48.46.4B.4A.8F.D3.A4.49.9B.44.6E.EA.23.F5.B6.36.0F.ED.8F.DE.10.11.12.13.14.15"),
+        ("zhimei_v1", 0x03, "48.46.4B.4A.1C.AB.1F.B8.0E.B7.E1.7D.98.82.31.A5.7E.7E.DB.68.10.11.12.13.14.15"),
+        ("zhimei_fan_v1", 0x03, "48.46.4B.4A.51.20.E8.30.90.E0.35.22.5D.CE.A2.58.CD.03.82.75.10.11.12.13.14.15"),
+    ],
+)
+class TestEncoderZhimeiWithDupes(_TestEncoderBase):
+    """Zhi Mei Encoder tests with duplicated."""
+
+    _dupe_allowed = True
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFull.PARAM_NAMES,
+    [
+        # PAIR
+        (
+            "zhimei_fan_v1",
+            "02.01.1A.1B.03.48.46.4B.4A.9E.18.A6.3A.8C.35.5F.FB.14.04.B8.27.00.FC.5C.F7.10.11.12.13.14.15",
+            "cmd: 0xB4, param: 0x00, args: [170,102,85]",
+            "id: 0x0000C002, index: 2, tx: 18, seed: 0x005B",
+            "device_0: ['cmd'] / {'cmd': 'pair'}",
+        ),
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.12.02.C0.B4.AA.66.55.44",
+            "cmd: 0xB4, param: 0x00, args: [170,102,85]",
+            "id: 0x0000C002, index: 2, tx: 18, seed: 0x0000",
+            "device_0: ['cmd'] / {'cmd': 'pair'}",
+        ),
+        # TIMER 2H (120min / 7200s)
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.13.02.C0.D4.02.00.00.02",
+            "cmd: 0xD4, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 19, seed: 0x0000",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 7200.0}",
+        ),
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.8F.F5.96.49.9B.44.6E.0A.23.37.53.75.68.22.BC.CC.10.11.12.13.14.15",
+            "cmd: 0xD4, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 19, seed: 0x0037",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 7200.0}",
+        ),
+        # MAIN LIGHT OFF
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.9E.27.A7.3A.8C.35.5F.ED.14.B1.CD.EA.F0.C8.01.7B.10.11.12.13.14.15",
+            "cmd: 0xA6, param: 0x00, args: [1,0,0]",
+            "id: 0x0000C002, index: 2, tx: 21, seed: 0x0068",
+            "light_0: ['on'] / {'on': False}",
+        ),
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.15.02.C0.A6.01.00.00.D5",
+            "cmd: 0xA6, param: 0x00, args: [1,0,0]",
+            "id: 0x0000C002, index: 2, tx: 21, seed: 0x0000",
+            "light_0: ['on'] / {'on': False}",
+        ),
+        # MAIN LIGHT ON
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.7B.8F.C5.5D.AF.58.82.C8.37.DE.6D.BA.B9.83.38.6B.10.11.12.13.14.15",
+            "cmd: 0xA6, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 22, seed: 0x00E5",
+            "light_0: ['on'] / {'on': True}",
+        ),
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.16.02.C0.A6.02.00.00.D7",
+            "cmd: 0xA6, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 22, seed: 0x0000",
+            "light_0: ['on'] / {'on': True}",
+        ),
+        # BR 0 %
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.78.17.C1.5C.B2.5B.85.D8.36.26.2E.52.77.5B.36.A5.10.11.12.13.14.15",
+            "cmd: 0xB5, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 25, seed: 0x007E",
+            "light_0: ['br'] / {'sub_type': 'cww', 'br': 0.0}",
+        ),
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.19.02.C0.B5.00.00.00.E7",
+            "cmd: 0xB5, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 25, seed: 0x0000",
+            "light_0: ['br'] / {'sub_type': 'cww', 'br': 0.0}",
+        ),
+        # BR 100%
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.E4.DA.66.F0.C6.EF.19.B4.CA.5E.3D.CA.3A.B3.5A.12.10.11.12.13.14.15",
+            "cmd: 0xB5, param: 0x00, args: [0,3,232]",
+            "id: 0x0000C002, index: 2, tx: 24, seed: 0x00D7",
+            "light_0: ['br'] / {'sub_type': 'cww', 'br': 1.0}",
+        ),
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.18.02.C0.B5.00.03.E8.D1",
+            "cmd: 0xB5, param: 0x00, args: [0,3,232]",
+            "id: 0x0000C002, index: 2, tx: 24, seed: 0x0000",
+            "light_0: ['br'] / {'sub_type': 'cww', 'br': 1.0}",
+        ),
+        # COLD
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.1E.02.C0.B7.00.03.E8.D9",
+            "cmd: 0xB7, param: 0x00, args: [0,3,232]",
+            "id: 0x0000C002, index: 2, tx: 30, seed: 0x0000",
+            "light_0: ['ctr'] / {'sub_type': 'cww', 'ctr': 1.0}",
+        ),
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.07.CF.49.D1.23.CC.F6.55.AB.22.39.48.7C.EF.07.88.10.11.12.13.14.15",
+            "cmd: 0xB7, param: 0x00, args: [0,3,232]",
+            "id: 0x0000C002, index: 2, tx: 30, seed: 0x00A9",
+            "light_0: ['ctr'] / {'sub_type': 'cww', 'ctr': 1.0}",
+        ),
+        # WARM
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.16.FF.3B.C2.14.BD.E7.64.9C.C1.D9.EB.E0.D8.5D.CB.10.11.12.13.14.15",
+            "cmd: 0xB7, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 33, seed: 0x00A8",
+            "light_0: ['ctr'] / {'sub_type': 'cww', 'ctr': 0.0}",
+        ),
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.21.02.C0.B7.00.00.00.F1",
+            "cmd: 0xB7, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 33, seed: 0x0000",
+            "light_0: ['ctr'] / {'sub_type': 'cww', 'ctr': 0.0}",
+        ),
+        # Second Light (nearly) Full RED
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.0A.CA.3B.CE.20.C9.F3.95.A2.37.6F.5B.62.2A.AB.57.10.11.12.13.14.15",
+            "cmd: 0xCA, param: 0x00, args: [250,0,0]",
+            "id: 0x0000C002, index: 4, tx: 45, seed: 0x0099",
+            "light_1: ['rf', 'gf', 'bf'] / {'sub_type': 'rgb', 'rf': 0.9803921568627451, 'gf': 0.0, 'bf': 0.0}",
+        ),
+        # FAN Speed 2/6
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.22.02.C0.D3.02.00.00.10",
+            "cmd: 0xD3, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 34, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 2.0}",
+        ),
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.9E.82.B6.3A.8C.35.5F.18.14.3A.7F.80.63.4F.29.AB.10.11.12.13.14.15",
+            "cmd: 0xD3, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 34, seed: 0x00B5",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 2.0}",
+        ),
+        # FAN OFF
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.51.7A.09.83.59.82.AC.C5.5D.B7.DE.D3.E8.3A.33.E0.10.11.12.13.14.15",
+            "cmd: 0xD1, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 40, seed: 0x00E2",
+            "fan_0: ['on'] / {'on': False}",
+        ),
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.28.02.C0.D1.00.00.00.12",
+            "cmd: 0xD1, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 40, seed: 0x0000",
+            "fan_0: ['on'] / {'on': False}",
+        ),
+        # FAN Direction Reverse
+        (
+            "zhimei_fan_v0",
+            "02.01.1A.0B.03.55.02.2B.02.C0.DA.00.00.00.1E",
+            "cmd: 0xDA, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 43, seed: 0x0000",
+            "fan_0: ['dir'] / {'dir': False}",
+        ),
+        (
+            "zhimei_fan_v1",
+            "02.01.1A.1B.03.48.46.4B.4A.69.A3.A0.6B.C1.6A.94.22.45.BB.AB.3F.E4.A6.5C.D3.10.11.12.13.14.15",
+            "cmd: 0xDA, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 43, seed: 0x00E3",
+            "fan_0: ['dir'] / {'dir': False}",
+        ),
+        # FAN Direction Forward
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.1C.AB.2C.B8.0E.B7.E1.90.92.CA.E3.EE.D3.BF.0C.66.10.11.12.13.14.15",
+            "cmd: 0xD9, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 42, seed: 0x006E",
+            "fan_0: ['dir'] / {'dir': True}",
+        ),
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.2A.02.C0.D9.00.00.00.1C",
+            "cmd: 0xD9, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 42, seed: 0x0000",
+            "fan_0: ['dir'] / {'dir': True}",
+        ),
+        # FAN Oscillation ON
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.7B.53.9F.5D.AF.58.82.30.37.C8.09.33.D7.B9.AE.77.10.11.12.13.14.15",
+            "cmd: 0xDE, param: 0x00, args: [1,0,0]",
+            "id: 0x0000C002, index: 2, tx: 56, seed: 0x00A1",
+            "fan_0: ['osc'] / {'osc': True}",
+        ),
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.38.02.C0.DE.01.00.00.30",
+            "cmd: 0xDE, param: 0x00, args: [1,0,0]",
+            "id: 0x0000C002, index: 2, tx: 56, seed: 0x0000",
+            "fan_0: ['osc'] / {'osc': True}",
+        ),
+        # FAN Oscillation OFF
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.2E.02.C0.DE.02.00.00.27",
+            "cmd: 0xDE, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 46, seed: 0x0000",
+            "fan_0: ['osc'] / {'osc': False}",
+        ),
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.78.B0.8C.5C.B2.5B.85.2F.36.51.28.09.4C.10.E8.97.10.11.12.13.14.15",
+            "cmd: 0xDE, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 46, seed: 0x00C5",
+            "fan_0: ['osc'] / {'osc': False}",
+        ),
+        # FAN Natural Wind
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.27.02.C0.DB.00.00.00.1B",
+            "cmd: 0xDB, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 39, seed: 0x0000",
+            "fan_0: ['preset'] / {'preset': 'breeze'}",
+        ),
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.9E.64.B9.3A.8C.35.5F.10.14.D2.94.C6.CB.97.A1.A7.10.11.12.13.14.15",
+            "cmd: 0xDB, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 2, tx: 39, seed: 0x0097",
+            "fan_0: ['preset'] / {'preset': 'breeze'}",
+        ),
+    ],
+)
+class TestEncoderZhimeiFanFull(_TestEncoderFull):
+    """Zhi Mei Fan Encoder / Decoder Fan Full tests."""
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFull.PARAM_NAMES,
+    [
+        # Night Mode (No Direct)
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.39.02.C0.A1.19.19.00.25",
+            "cmd: 0xA1, param: 0x00, args: [25,25,0]",
+            "id: 0x0000C002, index: 2, tx: 57, seed: 0x0000",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 0.1, 'warm': 0.1}",
+        ),
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.1C.58.3D.B8.0E.B7.E1.68.92.82.4A.3F.24.E7.13.F8.10.11.12.13.14.15",
+            "cmd: 0xA1, param: 0x00, args: [25,25,0]",
+            "id: 0x0000C002, index: 2, tx: 57, seed: 0x0019",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 0.1, 'warm': 0.1}",
+        ),
+        # Button Switch COLD
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.3C.02.C0.A7.01.00.00.FD",
+            "cmd: 0xA7, param: 0x00, args: [1,0,0]",
+            "id: 0x0000C002, index: 2, tx: 60, seed: 0x0000",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 1, 'warm': 0}",
+        ),
+        (
+            "zhimei_fan_v1",
+            "02.01.19.1B.03.48.46.4B.4A.78.C1.9E.5C.B2.5B.85.C6.36.A9.0E.CE.F4.D8.61.20.10.11.12.13.14.15",
+            "cmd: 0xA7, param: 0x00, args: [1,0,0]",
+            "id: 0x0000C002, index: 2, tx: 60, seed: 0x00D4",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 1, 'warm': 0}",
+        ),
+        # Button Switch WARM
+        (
+            "zhimei_fan_v0",
+            "02.01.1A.0B.03.55.02.3D.02.C0.A7.02.00.00.FF",
+            "cmd: 0xA7, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 61, seed: 0x0000",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 0, 'warm': 1}",
+        ),
+        (
+            "zhimei_fan_v1",
+            "02.01.1A.1B.03.48.46.4B.4A.B2.89.53.26.F8.21.4B.90.00.5A.32.18.43.87.14.A1.10.11.12.13.14.15",
+            "cmd: 0xA7, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 61, seed: 0x0036",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 0, 'warm': 1}",
+        ),
+        # Button Switch NATURAL
+        (
+            "zhimei_fan_v1",
+            "02.01.1A.1B.03.48.46.4B.4A.0A.8E.31.CE.20.C9.F3.78.A8.B8.DE.C7.E5.A9.AE.FE.10.11.12.13.14.15",
+            "cmd: 0xA7, param: 0x00, args: [3,0,0]",
+            "id: 0x0000C002, index: 2, tx: 59, seed: 0x0055",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 1, 'warm': 1}",
+        ),
+        (
+            "zhimei_fan_v0",
+            "02.01.19.0B.03.55.02.3B.02.C0.A7.03.00.00.FE",
+            "cmd: 0xA7, param: 0x00, args: [3,0,0]",
+            "id: 0x0000C002, index: 2, tx: 59, seed: 0x0000",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 1, 'warm': 1}",
+        ),
+        # BR+
+        (
+            "zhimei_fan_v1b",
+            "1E.FF.00.00.00.48.46.4B.4A.51.02.CA.A6.07.82.AC.21.B2.F0.62.B7.AB.C5.87.34.10.11.12.13.14.15",
+            "cmd: 0xB5, param: 0x00, args: [1,0,100]",
+            "id: 0x00001221, index: 255, tx: 105, seed: 0x006A",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B+', 'step': 0.166}",
+        ),
+        # BR-
+        (
+            "zhimei_fan_v1b",
+            "1E.FF.00.00.00.48.46.4B.4A.69.1B.DF.4E.EF.6A.94.C9.CA.60.F3.18.3B.D1.0C.53.10.11.12.13.14.15",
+            "cmd: 0xB5, param: 0x00, args: [2,0,80]",
+            "id: 0x00001221, index: 255, tx: 106, seed: 0x006B",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B-', 'step': 0.166}",
+        ),
+        # K+
+        (
+            "zhimei_fan_v1b",
+            "1E.FF.00.00.00.48.46.4B.4A.16.AA.70.DF.46.BD.E7.64.77.C1.2E.EA.02.C8.7E.D8.10.11.12.13.14.15",
+            "cmd: 0xB7, param: 0x00, args: [1,2,16]",
+            "id: 0x00001221, index: 255, tx: 116, seed: 0x0075",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K+', 'step': 0.166}",
+        ),
+        # K-
+        (
+            "zhimei_fan_v1b",
+            "1E.FF.00.00.00.48.46.4B.4A.99.3C.04.5E.DF.3A.64.F7.FA.39.B5.7F.65.FC.B7.35.10.11.12.13.14.15",
+            "cmd: 0xB7, param: 0x00, args: [2,1,212]",
+            "id: 0x00001221, index: 255, tx: 119, seed: 0x0078",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K-', 'step': 0.166}",
+        ),
+    ],
+)
+class TestEncoderZhimeiFanNoReverse(_TestEncoderFull):
+    """Zhi Mei Fan Encoder / Decoder Fan No Reverse tests."""
+
+    _with_reverse = False
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFull.PARAM_NAMES,
+    [
+        # PAIR
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.9A.20.75.8B.15.D5.EF.26.C1.35.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xB4, param: 0x00, args: [0,0,0]",
+            "id: 0x000002C0, index: 4, tx: 31, seed: 0x0000",
+            "device_0: ['cmd'] / {'cmd': 'pair'}",
+        ),
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.1C.AB.1F.B8.0E.B7.E1.7D.98.82.31.A5.7E.7E.DB.68.10.11.12.13.14.15",
+            "cmd: 0xB4, param: 0x00, args: [170,102,85]",
+            "id: 0x0000C002, index: 4, tx: 31, seed: 0x006E",
+            "device_0: ['cmd'] / {'cmd': 'pair'}",
+        ),
+        # TIMER 2H (120min / 7200s)
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.1C.49.36.B8.0E.B7.E1.6C.98.C8.F3.E6.D5.B1.90.BA.10.11.12.13.14.15",
+            "cmd: 0xA5, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 4, tx: 32, seed: 0x0008",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 7200.0}",
+        ),
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.A5.1D.4A.B4.3B.EA.EF.1B.94.D2.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xA5, param: 0x00, args: [2,0,0]",
+            "id: 0x000002C0, index: 4, tx: 32, seed: 0x0000",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 7200.0}",
+        ),
+        # MAIN LIGHT OFF
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.A7.1D.48.B6.2E.E8.EF.1B.6B.DF.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xB2, param: 0x00, args: [0,0,0]",
+            "id: 0x000002C0, index: 4, tx: 34, seed: 0x0000",
+            "light_0: ['on'] / {'on': False}",
+        ),
+        (
+            "zhimei_v1",
+            "02.01.1A.1B.03.48.46.4B.4A.69.92.A7.6B.C1.6A.94.CA.43.29.72.51.76.38.CE.1E.10.11.12.13.14.15",
+            "cmd: 0xB2, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 4, tx: 34, seed: 0x00F2",
+            "light_0: ['on'] / {'on': False}",
+        ),
+        # MAIN LIGHT ON
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.9E.A0.B3.3A.8C.35.5F.F8.16.39.41.83.68.40.96.14.10.11.12.13.14.15",
+            "cmd: 0xB3, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 4, tx: 33, seed: 0x00D3",
+            "light_0: ['on'] / {'on': True}",
+        ),
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.A4.1E.4B.B5.2C.EB.EF.18.ED.08.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xB3, param: 0x00, args: [0,0,0]",
+            "id: 0x000002C0, index: 4, tx: 33, seed: 0x0000",
+            "light_0: ['on'] / {'on': True}",
+        ),
+        # BR 0 %
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.E1.E2.70.F3.C9.F2.1C.B1.CB.06.B2.A0.95.EB.AC.D7.10.11.12.13.14.15",
+            "cmd: 0xB5, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 4, tx: 35, seed: 0x00DA",
+            "light_0: ['br'] / {'sub_type': 'cww', 'br': 0.0}",
+        ),
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.A6.1C.49.B7.28.E9.EF.1A.A1.CE.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xB5, param: 0x00, args: [0,0,0]",
+            "id: 0x000002C0, index: 4, tx: 35, seed: 0x0000",
+            "light_0: ['br'] / {'sub_type': 'cww', 'br': 0.0}",
+        ),
+        # BR 100%
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.9E.09.B8.3A.8C.35.5F.FA.16.21.4E.7B.71.E0.31.45.10.11.12.13.14.15",
+            "cmd: 0xB5, param: 0x00, args: [0,3,232]",
+            "id: 0x0000C002, index: 4, tx: 36, seed: 0x004A",
+            "light_0: ['br'] / {'sub_type': 'cww', 'br': 1.0}",
+        ),
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.49.F3.A6.5B.C7.06.07.1D.23.A9.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xB5, param: 0x00, args: [0,3,232]",
+            "id: 0x000002C0, index: 4, tx: 36, seed: 0x0000",
+            "light_0: ['br'] / {'sub_type': 'cww', 'br': 1.0}",
+        ),
+        # COLD
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.48.F2.A7.5A.C4.07.07.1C.BE.D6.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xB7, param: 0x00, args: [0,3,232]",
+            "id: 0x000002C0, index: 4, tx: 37, seed: 0x0000",
+            "light_0: ['ctr'] / {'sub_type': 'cww', 'ctr': 1.0}",
+        ),
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.E4.8F.71.F0.C6.EF.19.B2.D0.4D.69.63.51.94.4A.DB.10.11.12.13.14.15",
+            "cmd: 0xB7, param: 0x00, args: [0,3,232]",
+            "id: 0x0000C002, index: 4, tx: 37, seed: 0x000A",
+            "light_0: ['ctr'] / {'sub_type': 'cww', 'ctr': 1.0}",
+        ),
+        # WARM
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.99.F8.B3.3B.91.3A.64.F7.13.B2.01.E4.E9.CF.B1.3C.10.11.12.13.14.15",
+            "cmd: 0xB7, param: 0x00, args: [0,0,0]",
+            "id: 0x0000C002, index: 4, tx: 38, seed: 0x003C",
+            "light_0: ['ctr'] / {'sub_type': 'cww', 'ctr': 0.0}",
+        ),
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.A3.19.4C.B2.2F.EC.EF.1F.81.A2.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xB7, param: 0x00, args: [0,0,0]",
+            "id: 0x000002C0, index: 4, tx: 38, seed: 0x0000",
+            "light_0: ['ctr'] / {'sub_type': 'cww', 'ctr': 0.0}",
+        ),
+        # RGB Second Light RED (nearly...)
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.9B.DE.74.99.6A.D4.EF.D8.7C.AF.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xCA, param: 0x00, args: [255,19,0]",
+            "id: 0x000002C0, index: 4, tx: 30, seed: 0x0000",
+            "light_1: ['rf', 'gf', 'bf'] / {'sub_type': 'rgb', 'rf': 1.0, 'gf': 0.07450980392156863, 'bf': 0.0}",
+        ),
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.51.20.D3.83.59.82.AC.DA.5B.F0.07.95.9E.E1.7F.1D.10.11.12.13.14.15",
+            "cmd: 0xCA, param: 0x00, args: [255,19,0]",
+            "id: 0x0000C002, index: 4, tx: 30, seed: 0x000C",
+            "light_1: ['rf', 'gf', 'bf'] / {'sub_type': 'rgb', 'rf': 1.0, 'gf': 0.07450980392156863, 'bf': 0.0}",
+        ),
+        # Second Light ON
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.07.F1.13.D1.23.CC.F6.44.AD.6D.54.3B.32.0C.9F.CA.10.11.12.13.14.15",
+            "cmd: 0xA6, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 4, tx: 40, seed: 0x008B",
+            "light_1: ['on'] / {'on': True}",
+        ),
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.AD.15.42.BC.30.E2.EF.13.23.D0.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xA6, param: 0x00, args: [2,0,0]",
+            "id: 0x000002C0, index: 4, tx: 40, seed: 0x0000",
+            "light_1: ['on'] / {'on': True}",
+        ),
+        # Second Light OFF
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.E4.FC.6F.F0.C6.EF.19.A3.D0.1C.DA.0D.81.DD.3A.2D.10.11.12.13.14.15",
+            "cmd: 0xA6, param: 0x00, args: [1,0,0]",
+            "id: 0x0000C002, index: 4, tx: 39, seed: 0x00F5",
+            "light_1: ['on'] / {'on': False}",
+        ),
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.A2.19.4D.B3.3F.ED.EF.1F.2C.B5.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xA6, param: 0x00, args: [1,0,0]",
+            "id: 0x000002C0, index: 4, tx: 39, seed: 0x0000",
+            "light_1: ['on'] / {'on': False}",
+        ),
+    ],
+)
+class TestEncoderZhimeiFull(_TestEncoderFull):
+    """Zhi Mei Fan Encoder / Decoder Full tests."""
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFull.PARAM_NAMES,
+    [
+        # Night Mode (No Direct)
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.B6.15.5C.BE.2C.F9.EF.13.0B.B9.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xA1, param: 0x00, args: [25,25,0]",
+            "id: 0x000002C0, index: 1, tx: 51, seed: 0x0000",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 0.1, 'warm': 0.1}",
+        ),
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.FF.B0.26.D9.2B.D4.FE.47.B2.9B.0F.F6.FB.AE.DD.F0.10.11.12.13.14.15",
+            "cmd: 0xA1, param: 0x00, args: [25,25,0]",
+            "id: 0x0000C002, index: 1, tx: 51, seed: 0x0042",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 0.1, 'warm': 0.1}",
+        ),
+        # Button Switch COLD
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.7B.ED.8E.5D.AF.58.82.C9.36.B6.AE.3D.E1.0B.65.68.10.11.12.13.14.15",
+            "cmd: 0xA7, param: 0x00, args: [1,0,0]",
+            "id: 0x0000C002, index: 1, tx: 47, seed: 0x000B",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 1, 'warm': 0}",
+        ),
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.AA.11.40.BB.36.E5.EF.17.6A.9A.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xA7, param: 0x00, args: [1,0,0]",
+            "id: 0x000002C0, index: 1, tx: 47, seed: 0x0000",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 1, 'warm': 0}",
+        ),
+        # Button Switch WARM
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.B5.0D.5F.A4.29.FA.EF.0B.91.B1.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xA7, param: 0x00, args: [2,0,0]",
+            "id: 0x000002C0, index: 1, tx: 48, seed: 0x0000",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 0, 'warm': 1}",
+        ),
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.0A.85.38.CE.20.C9.F3.78.A5.CD.BE.E9.D4.D4.EC.38.10.11.12.13.14.15",
+            "cmd: 0xA7, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 1, tx: 48, seed: 0x0022",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 0, 'warm': 1}",
+        ),
+        # Button Switch NATURAL
+        (
+            "zhimei_v2",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.B4.0D.5E.A5.28.FB.EF.0B.26.79.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xA7, param: 0x00, args: [3,0,0]",
+            "id: 0x000002C0, index: 1, tx: 49, seed: 0x0000",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 1, 'warm': 1}",
+        ),
+        (
+            "zhimei_v1",
+            "02.01.19.1B.03.48.46.4B.4A.16.FF.2B.C2.14.BD.E7.74.99.AE.FA.FD.EF.AB.7A.6E.10.11.12.13.14.15",
+            "cmd: 0xA7, param: 0x00, args: [3,0,0]",
+            "id: 0x0000C002, index: 1, tx: 49, seed: 0x00A8",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 1, 'warm': 1}",
+        ),
+    ],
+)
+class TestEncoderZhimeiNoReverse(_TestEncoderFull):
+    """Zhi Mei Fan Encoder / Decoder No Reverse tests."""
+
+    _with_reverse = False
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFull.PARAM_NAMES,
+    [
+        # ALL OFF
+        (
+            "zhimei_fan_vr0",
+            "55.FF.63.01.6A.10.00.00.00.32",
+            "cmd: 0x10, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 99, seed: 0x0000",
+            "device_0: ['on'] / {'on': False}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.63.01.6A.48.46.4B.4A.16.BB.7D.BF.BE.BD.E7.BF.77.6A.F0.5E.33.0F.86.76.10.11.12.13.14.15",
+            "cmd: 0x10, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 99, seed: 0x0064",
+            "device_0: ['on'] / {'on': False}",
+        ),
+        # Main Light Toogle
+        (
+            "zhimei_fan_vr0",
+            "55.FF.5D.01.6A.04.00.00.00.20",
+            "cmd: 0x04, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 93, seed: 0x0000",
+            "light_0: ['on'] / {'on': 'toggle'}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.5D.01.6A.48.46.4B.4A.7B.38.FC.5C.09.58.82.66.DC.29.CB.51.76.58.A0.9A.10.11.12.13.14.15",
+            "cmd: 0x04, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 93, seed: 0x005E",
+            "light_0: ['on'] / {'on': 'toggle'}",
+        ),
+        # BR +
+        (
+            "zhimei_fan_vr0",
+            "55.FF.04.01.6A.13.00.00.00.D6",
+            "cmd: 0x13, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 4, seed: 0x0000",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B+', 'step': 0.166}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.04.01.6A.48.46.4B.4A.B2.B6.7C.23.62.21.4B.24.13.6D.5A.1F.34.74.31.62.10.11.12.13.14.15",
+            "cmd: 0x13, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 4, seed: 0x0005",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B+', 'step': 0.166}",
+        ),
+        # BR -
+        (
+            "zhimei_fan_vr0",
+            "55.FF.07.01.6A.0C.00.00.00.D2",
+            "cmd: 0x0C, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 7, seed: 0x0000",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B-', 'step': 0.166}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.07.01.6A.48.46.4B.4A.1C.49.17.B9.A4.B7.E1.C5.7D.85.03.1B.20.E4.69.A6.10.11.12.13.14.15",
+            "cmd: 0x0C, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 7, seed: 0x0008",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B-', 'step': 0.166}",
+        ),
+        # K-
+        (
+            "zhimei_fan_vr0",
+            "55.FF.15.01.6A.0B.00.00.00.DF",
+            "cmd: 0x0B, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 21, seed: 0x0000",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K-', 'step': 0.166}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.15.01.6A.48.46.4B.4A.E1.96.5E.F6.6F.F2.1C.0B.42.7A.9C.2C.21.87.87.0E.10.11.12.13.14.15",
+            "cmd: 0x0B, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 21, seed: 0x0016",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K-', 'step': 0.166}",
+        ),
+        # K+
+        (
+            "zhimei_fan_vr0",
+            "55.FF.0D.01.6A.09.00.00.00.D5",
+            "cmd: 0x09, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 13, seed: 0x0000",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K+', 'step': 0.166}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.0D.01.6A.48.46.4B.4A.9E.CD.8F.37.26.35.5F.3E.FF.9B.F3.21.06.EE.6E.38.10.11.12.13.14.15",
+            "cmd: 0x09, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 13, seed: 0x000E",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K+', 'step': 0.166}",
+        ),
+        # Night Mode (TOGGLE?)
+        (
+            "zhimei_fan_vr0",
+            "55.FF.19.01.6A.07.00.00.00.DF",
+            "cmd: 0x07, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 25, seed: 0x0000",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 0.1, 'warm': 0.1}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.19.01.6A.48.46.4B.4A.7B.FC.C0.5C.09.58.82.69.DC.29.2F.51.76.58.08.1A.10.11.12.13.14.15",
+            "cmd: 0x07, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 25, seed: 0x001A",
+            "light_0: [] / {'sub_type': 'cww', 'cold': 0.1, 'warm': 0.1}",
+        ),
+        # Fan DIR TOGGLE
+        (
+            "zhimei_fan_vr0",
+            "55.FF.1C.01.6A.02.00.00.00.DD",
+            "cmd: 0x02, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 28, seed: 0x0000",
+            "fan_0: ['dir'] / {'dir': 'toggle'}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.1C.01.6A.48.46.4B.4A.51.11.D5.86.FF.82.AC.92.B2.E0.B5.46.BB.B1.5B.09.10.11.12.13.14.15",
+            "cmd: 0x02, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 28, seed: 0x001D",
+            "fan_0: ['dir'] / {'dir': 'toggle'}",
+        ),
+        # Timer 1H
+        (
+            "zhimei_fan_vr0",
+            "55.FF.2D.01.6A.12.00.00.00.FE",
+            "cmd: 0x12, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 45, seed: 0x0000",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 3600}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.2D.01.6A.48.46.4B.4A.51.3E.06.86.FF.82.AC.82.B2.F0.B6.B6.AB.E1.05.40.10.11.12.13.14.15",
+            "cmd: 0x12, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 45, seed: 0x002E",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 3600}",
+        ),
+        # Timer 2H
+        (
+            "zhimei_fan_vr0",
+            "55.FF.2F.01.6A.14.00.00.00.02",
+            "cmd: 0x14, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 47, seed: 0x0000",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 7200}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.2F.01.6A.48.46.4B.4A.07.56.1A.D0.8D.CC.F6.F2.68.32.3A.B8.6D.87.B4.FD.10.11.12.13.14.15",
+            "cmd: 0x14, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 47, seed: 0x0030",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 7200}",
+        ),
+    ],
+)
+class TestEncoderZhimeiFanRemoteNoDirect(_TestEncoderFull):
+    """Zhi Mei Fan Encoder / Decoder Fan Remote No Direct tests."""
+
+    _with_reverse = False
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFull.PARAM_NAMES,
+    [
+        # Fan OFF
+        (
+            "zhimei_fan_vr0",
+            "55.FF.6B.01.6A.0E.00.00.00.38",
+            "cmd: 0x0E, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 107, seed: 0x0000",
+            "fan_0: ['on'] / {'speed_count': 6, 'on': False}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.6B.01.6A.48.46.4B.4A.E4.75.33.F1.6C.EF.19.0B.45.55.DF.DB.50.24.31.8A.10.11.12.13.14.15",
+            "cmd: 0x0E, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 107, seed: 0x006C",
+            "fan_0: ['on'] / {'speed_count': 6, 'on': False}",
+        ),
+        # Fan Speed 1
+        (
+            "zhimei_fan_vr0",
+            "55.FF.20.01.6A.03.00.00.00.E2",
+            "cmd: 0x03, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 32, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 1}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.20.01.6A.48.46.4B.4A.07.47.0B.D0.8D.CC.F6.E1.68.9F.1A.CB.00.DA.70.37.10.11.12.13.14.15",
+            "cmd: 0x03, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 32, seed: 0x0021",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 1}",
+        ),
+        # Fan Speed 2
+        (
+            "zhimei_fan_vr0",
+            "55.FF.22.01.6A.05.00.00.00.E6",
+            "cmd: 0x05, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 34, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 2}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.22.01.6A.48.46.4B.4A.23.6D.31.B4.B1.B0.DA.BF.84.AF.0C.FB.F0.C2.AD.6B.10.11.12.13.14.15",
+            "cmd: 0x05, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 34, seed: 0x0023",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 2}",
+        ),
+        # Fan Speed 3
+        (
+            "zhimei_fan_vr0",
+            "55.FF.24.01.6A.08.00.00.00.EB",
+            "cmd: 0x08, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 36, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 3}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.24.01.6A.48.46.4B.4A.E1.A9.6D.F6.6F.F2.1C.0C.42.EA.1B.BC.B1.17.7D.E3.10.11.12.13.14.15",
+            "cmd: 0x08, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 36, seed: 0x0025",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 3}",
+        ),
+        # Fan Speed 4
+        (
+            "zhimei_fan_vr0",
+            "55.FF.27.01.6A.0A.00.00.00.F0",
+            "cmd: 0x0A, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 39, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 4}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.27.01.6A.48.46.4B.4A.E4.B1.6F.F1.6C.EF.19.07.45.1C.DA.0C.81.DD.E8.16.10.11.12.13.14.15",
+            "cmd: 0x0A, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 39, seed: 0x0028",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 4}",
+        ),
+        # Fan Speed 5
+        (
+            "zhimei_fan_vr0",
+            "55.FF.29.01.6A.0D.00.00.00.F5",
+            "cmd: 0x0D, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 41, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 5}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.29.01.6A.48.46.4B.4A.1C.67.2D.B9.A4.B7.E1.C4.7D.2B.57.8D.72.5E.D3.E7.10.11.12.13.14.15",
+            "cmd: 0x0D, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 41, seed: 0x002A",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 5}",
+        ),
+        # Fan Speed 6
+        (
+            "zhimei_fan_vr0",
+            "55.FF.2B.01.6A.0F.00.00.00.F9",
+            "cmd: 0x0F, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 43, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 6}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.2B.01.6A.48.46.4B.4A.9E.EB.AD.37.26.35.5F.44.FF.A8.D6.10.F5.D1.09.27.10.11.12.13.14.15",
+            "cmd: 0x0F, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 43, seed: 0x002C",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 6}",
+        ),
+        # Fan Breeze
+        (
+            "zhimei_fan_vr0",
+            "55.FF.1E.01.6A.11.00.00.00.EE",
+            "cmd: 0x11, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 30, seed: 0x0000",
+            "fan_0: ['preset'] / {'preset': 'breeze'}",
+        ),
+        (
+            "zhimei_fan_vr1",
+            "1E.FF.1E.01.6A.48.46.4B.4A.9E.DC.A2.37.26.35.5F.56.FF.CB.D2.F1.D6.BE.4A.7B.10.11.12.13.14.15",
+            "cmd: 0x11, param: 0x00, args: [0,0,0]",
+            "id: 0x00006A01, index: 255, tx: 30, seed: 0x001F",
+            "fan_0: ['preset'] / {'preset': 'breeze'}",
+        ),
+    ],
+)
+class TestEncoderZhimeiFanRemote(_TestEncoderFull):
+    """Zhi Mei Fan Encoder / Decoder Fan Remote tests."""
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFullAll.PARAM_NAMES,
+    [
+        # MAIN LIGHT ON
+        (
+            "zhimei_fan_v1",
+            [],
+            "rev_on_off",
+            "02.01.19.1B.03.48.46.4B.4A.9E.27.A7.3A.8C.35.5F.ED.14.B1.CD.EA.F0.C8.01.7B.10.11.12.13.14.15",
+            "cmd: 0xA6, param: 0x00, args: [1,0,0]",
+            "id: 0x0000C002, index: 2, tx: 21, seed: 0x0068",
+            "light_0: ['on'] / {'on': True}",
+        ),
+        (
+            "zhimei_fan_v0",
+            [],
+            "rev_on_off",
+            "02.01.19.0B.03.55.02.15.02.C0.A6.01.00.00.D5",
+            "cmd: 0xA6, param: 0x00, args: [1,0,0]",
+            "id: 0x0000C002, index: 2, tx: 21, seed: 0x0000",
+            "light_0: ['on'] / {'on': True}",
+        ),
+        # MAIN LIGHT OFF
+        (
+            "zhimei_fan_v1",
+            [],
+            "rev_on_off",
+            "02.01.19.1B.03.48.46.4B.4A.7B.8F.C5.5D.AF.58.82.C8.37.DE.6D.BA.B9.83.38.6B.10.11.12.13.14.15",
+            "cmd: 0xA6, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 22, seed: 0x00E5",
+            "light_0: ['on'] / {'on': False}",
+        ),
+        (
+            "zhimei_fan_v0",
+            [],
+            "rev_on_off",
+            "02.01.19.0B.03.55.02.16.02.C0.A6.02.00.00.D7",
+            "cmd: 0xA6, param: 0x00, args: [2,0,0]",
+            "id: 0x0000C002, index: 2, tx: 22, seed: 0x0000",
+            "light_0: ['on'] / {'on': False}",
+        ),
+    ],
+)
+class TestEncoderZhimeiSets(_TestEncoderFullAll):
+    """Zhimei Encoder / Decoder Full ALL tests."""
+
+
+_CWW_ATTRS = {"sub_type": "cww", "on": True, "br": 0.3, "ct": 0.2, "ctr": 0.8, "cold": 0.3, "warm": 0.12}
+_CT_CMD = "cmd: 0xB7, param: 0x00, args: [0,3,32]"
+_BR_CMD = "cmd: 0xB5, param: 0x00, args: [0,1,44]"
+
+
+@pytest.mark.parametrize("enc_name", ["zhimei_v1", "zhimei_v1b", "zhimei_v2", "zhiguang2_v2"])
+@pytest.mark.parametrize(
+    ("chg_attrs", "expected_def", "expected_br_after_ct"),
+    [
+        (["ct", "ctr", "cold", "warm"], [_CT_CMD], [_CT_CMD, _BR_CMD]),
+        (["br", "cold", "warm"], [_BR_CMD], [_BR_CMD]),
+        (["br", "ct", "ctr", "cold", "warm"], [_BR_CMD, _CT_CMD], [_CT_CMD, _BR_CMD]),
+        (["on"], ["cmd: 0xB3, param: 0x00, args: [0,0,0]"], ["cmd: 0xB3, param: 0x00, args: [0,0,0]"]),
+    ],
+)
+def test_br_after_ct(enc_name: str, chg_attrs: list[str], expected_def: list[str], expected_br_after_ct: list[str]) -> None:
+    """With 'br_after_ct', the brightness is always sent after the Color Temperature, the default set is unchanged."""
+    codec = CODECS[enc_name]
+    ent_attr = BleAdvEntAttr(chg_attrs, _CWW_ATTRS, "light", 0)
+    assert [repr(enc_cmd) for enc_cmd in codec.ent_to_enc(ent_attr, BleAdvCodec.DEF_TRANS_NAME)] == expected_def
+    assert [repr(enc_cmd) for enc_cmd in codec.ent_to_enc(ent_attr, "br_after_ct")] == expected_br_after_ct
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFullAll.PARAM_NAMES,
+    [
+        # BRIGHTNESS 100%
+        (
+            "zhimei_v1",
+            [],
+            "br_after_ct",
+            "02.01.19.1B.03.48.46.4B.4A.9E.09.B8.3A.8C.35.5F.FA.16.21.4E.7B.71.E0.31.45.10.11.12.13.14.15",
+            "cmd: 0xB5, param: 0x00, args: [0,3,232]",
+            "id: 0x0000C002, index: 4, tx: 36, seed: 0x004A",
+            "light_0: ['br'] / {'sub_type': 'cww', 'br': 1.0}",
+        ),
+        (
+            "zhimei_v2",
+            [],
+            "br_after_ct",
+            "02.01.19.1B.03.F9.08.49.B2.CE.2C.49.F3.A6.5B.C7.06.07.1D.23.A9.10.11.12.13.14.15.16.17.18.19",
+            "cmd: 0xB5, param: 0x00, args: [0,3,232]",
+            "id: 0x000002C0, index: 4, tx: 36, seed: 0x0000",
+            "light_0: ['br'] / {'sub_type': 'cww', 'br': 1.0}",
+        ),
+    ],
+)
+class TestEncoderZhimeiBrAfterCt(_TestEncoderFullAll):
+    """Zhi Mei Encoder / Decoder 'br_after_ct' tests: the reverse side is unchanged."""
+
+
+@pytest.mark.parametrize("enc_name", ["zhimei_v1", "zhimei_v1b", "zhimei_v2", "zhiguang2_v2"])
+@pytest.mark.parametrize("cmd", [0xB5, 0xB7])
+def test_br_after_ct_reverse(enc_name: str, cmd: int) -> None:
+    """With 'br_after_ct', the brightness and Color Temperature commands received are decoded as with the default set."""
+    codec = CODECS[enc_name]
+    enc_cmd = BleAdvEncCmd(cmd)
+    enc_cmd.arg1 = 1
+    enc_cmd.arg2 = 44
+    def_ent_attrs = codec.enc_to_ent(enc_cmd, BleAdvCodec.DEF_TRANS_NAME)
+    assert len(def_ent_attrs) == 1
+    assert [repr(ent_attr) for ent_attr in codec.enc_to_ent(enc_cmd, "br_after_ct")] == [repr(def_ent_attrs[0])]

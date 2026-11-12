@@ -1,0 +1,24 @@
+# This file allows the pre-install of the python dependencies needed by the components defined in the config,
+# directly in the docker container, avoiding the re install by hass on 'simple' container rebuild
+# see requirements.txt to know how to generate the content of this file
+home-assistant-frontend==20260729.7
+ha-ffmpeg==3.2.2
+rf-protocols==4.3.0
+infrared-protocols==8.2.1
+radios==0.3.2
+pycountry==24.6.1
+gTTS==2.5.4
+aioesphomeapi==45.6.1
+esphome-dashboard-api==1.4.0
+bleak-esphome==3.9.7
+PyTurboJPEG==1.8.3
+hassil==3.11.0
+home-assistant-intents==2026.7.30
+pymicro-vad==1.0.1
+mutagen==1.48.1
+aiodhcpwatcher==1.2.7
+aiodiscover==3.3.2
+pyspeex-noise==1.0.2
+bluetooth-data-tools==1.29.18
+habluetooth==6.26.5
+bleak-retry-connector==4.6.3

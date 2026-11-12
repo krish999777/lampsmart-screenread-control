@@ -1,0 +1,14 @@
+# Secrets
+firmware/include/wifi_secrets.h
+
+# Build & tool artifacts
+firmware/.pio/
+firmware/.venv/
+firmware/data/
+web/node_modules/
+web/dist/
+references/**/.dart_tool/
+references/**/build/
+.DS_Store
+*.log
+

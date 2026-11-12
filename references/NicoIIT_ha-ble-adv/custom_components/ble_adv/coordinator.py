@@ -1,0 +1,400 @@
+"""BLE ADV Coordinator."""
+
+from __future__ import annotations
+
+import logging
+import sys
+from collections import deque
+from copy import copy
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
+
+from homeassistant.components.diagnostics import async_format_manifest
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import Event, HomeAssistant
+from homeassistant.helpers.system_info import async_get_system_info
+from homeassistant.loader import async_get_integration
+
+from .adapters import BleAdvBtHciManager, BleAdvQueueItem
+from .codecs import codec_from_dyn_base
+from .codecs.models import BleAdvAdvertisement, BleAdvCodec, BleAdvConfig, BleAdvEncCmd, BleAdvEntAttr
+from .const import CONF_ADAPTER_ID, CONF_DEVICE_QUEUE, CONF_DURATION, CONF_INTERVAL, CONF_RAW, CONF_REPEAT, DOMAIN
+from .esp_adapters import BleAdvEspBtManager
+from .shelly_adapters import BleAdvShellyBtManager
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class BleAdvBaseDevice:
+    """Base Ble Adv Device."""
+
+    def __init__(
+        self,
+        coordinator: BleAdvCoordinator,
+        unique_id: str,
+        codec_id: str,
+        adapter_ids: list[str],
+        repeat: int,
+        interval: int,
+        duration: int,
+        config: BleAdvConfig,
+    ) -> None:
+        self.coordinator: BleAdvCoordinator = coordinator
+        self.unique_id: str = unique_id
+        self.adapter_ids: set[str] = set(adapter_ids)
+        self.codec_id: str = codec_id
+        self.codec: BleAdvCodec = coordinator.codecs[codec_id]
+        self.config: BleAdvConfig = config
+        self.repeat: int = repeat
+        self.interval: int = interval
+        self.duration: int = duration
+
+        self.in_use_codec_ids: set[str] = set()
+        self._listeners: list[tuple[str, BleAdvConfig, bool]] = []
+        self.add_listener(codec_id, config, True)
+
+        self.prev_cmd: BleAdvEncCmd | None = None
+        self.prev_tx_count: int = 0
+        self.prev_seed: int = 0
+
+    @property
+    def available(self) -> bool:
+        """Return True if the device is available: if one of the adapters is available."""
+        return any(adapter_id in self.coordinator.get_adapter_ids() for adapter_id in self.adapter_ids)
+
+    @property
+    def translator_set(self) -> str:
+        """Get translator set with default value if not provided."""
+        return BleAdvCodec.DEF_TRANS_NAME if self.config.translator_set is None else self.config.translator_set
+
+    def update_availability(self) -> None:
+        """Update availability."""
+
+    def add_listener(self, codec_id: str, config: BleAdvConfig, control_device: bool) -> None:
+        """Add a listener to this device."""
+        self.in_use_codec_ids.add(codec_id)
+        self._listeners.append((self.coordinator.codecs[codec_id].match_id, config, control_device))
+
+    def match(self, match_id: str, adapter_id: str, config: BleAdvConfig) -> bool | None:
+        """Match a given adapter / config.
+
+        Return:
+            - None if no listener matches,
+            - True if all matching listeners controls the device
+            - False if at least one of the matching listeners does not control the device.
+
+        """
+        match_found: bool = False
+        if adapter_id in self.adapter_ids:
+            for m_id, conf, ct in self._listeners:
+                if (match_id == m_id) and (config.id == conf.id) and (config.index == conf.index):
+                    if not ct:
+                        return False
+                    match_found = True
+        return True if match_found else None
+
+    async def async_on_enc_cmd(self, enc_cmd: BleAdvEncCmd) -> None:
+        """Call on matching command received."""
+
+    async def async_on_command(self, ent_attrs: list[BleAdvEntAttr], publish_command: bool) -> None:
+        """Call on matching command received."""
+
+    async def apply_cmd(self, enc_cmd: BleAdvEncCmd) -> None:
+        """Apply command."""
+        self.config.seed = 0
+        advs: list[BleAdvAdvertisement] = self.codec.encode_advs(enc_cmd, self.config)
+        for adapter_id in self.adapter_ids:
+            qi = BleAdvQueueItem(enc_cmd.cmd, self.repeat, self.duration, self.interval, [x.to_raw() for x in advs], self.codec.ign_duration)
+            await self.coordinator.advertise(adapter_id, self.unique_id, qi)
+
+    async def advertise(self, ent_attr: BleAdvEntAttr) -> None:
+        """Encode and Advertise a message."""
+        enc_cmds = self.codec.ent_to_enc(ent_attr, self.translator_set)
+        for enc_cmd in enc_cmds:
+            await self.apply_cmd(enc_cmd)
+
+
+@dataclass
+class BleAdvRecvItem:
+    """Received Adv and its related info."""
+
+    del_time: datetime
+    codec: BleAdvCodec
+    pub_devices: set[str]
+    conf: BleAdvConfig
+    enc_cmd: BleAdvEncCmd
+
+
+class _BleAdvHaBtHciManager(BleAdvBtHciManager):
+    async def async_init(self) -> None:
+        """Async Init."""
+        if not self.supported_by_host:
+            self._add_diag(f"Host BT Stack cannot be used as OS {sys.platform} does not support it", logging.INFO)
+            return
+        try:
+            await super().async_init()
+        except BaseException:
+            self._add_diag("Host BT Stack cannot be used", logging.INFO)
+            _LOGGER.exception("Host BT Stack cannot be used")
+
+
+class BleAdvCoordinator:
+    """Class to manage fetching any BLE ADV data."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        codecs: dict[str, BleAdvCodec],
+        ign_adapters: list[str],
+        ign_duration: int,
+        ign_cids: list[int],
+        ign_macs: list[str],
+        keep_recv: int,
+        maintainer_menus: bool,
+    ) -> None:
+        """Init."""
+        self.hass: HomeAssistant = hass
+        self.codecs: dict[str, BleAdvCodec] = codecs
+        self.ign_cids: set[int] = set(ign_cids)
+        self.ign_macs: set[str] = set(ign_macs)
+        self.ign_duration: int = ign_duration
+        self.ign_adapters = ign_adapters
+        self.maintainer_menus = maintainer_menus
+
+        self._raw_last_advs: dict[bytes, datetime] = {}
+        self._dec_last_advs: dict[bytes, BleAdvRecvItem] = {}
+
+        self._devices: list[BleAdvBaseDevice] = []
+        self._in_use_codecs: set[str] = set()
+        self._adapter_macs: set[str] = set()
+
+        self.bt_managers = [
+            _BleAdvHaBtHciManager(self.handle_raw_adv, self.on_adapter_change, ign_adapters),
+            BleAdvEspBtManager(self.hass, self.handle_raw_adv, self.on_adapter_change, ign_adapters, ign_duration, ign_cids, ign_macs),
+            BleAdvShellyBtManager(self.hass, self.handle_raw_adv, self.on_adapter_change, ign_adapters),
+        ]
+
+        self._stop_listening_time: datetime | None = None
+        self.listened_raw_advs: list[bytes] = []
+        self.listened_decoded_confs: list[tuple[str, str, str, list[Any], BleAdvConfig]] = []
+        self._diags: deque[str] = deque(maxlen=keep_recv)
+
+    def _add_diag(self, msg: str, log_level: int = logging.DEBUG) -> None:
+        """Add a diagnostic log."""
+        if log_level != logging.NOTSET:
+            _LOGGER.log(log_level, msg)
+        self._diags.append(f"{datetime.now()} - {msg}")
+
+    async def async_init(self) -> None:
+        """Async Init."""
+        for bt_manager in [bt_man for bt_man in self.bt_managers if not bt_man.disabled]:
+            await bt_manager.async_init()
+        self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self.on_stop_event)
+
+    async def async_final(self) -> None:
+        """Async Final: Clean-up."""
+        self._add_diag("Cleaning BT Connections.", logging.INFO)
+        for bt_manager in [bt_man for bt_man in self.bt_managers if not bt_man.disabled]:
+            await bt_manager.async_final()
+
+    def get_adapter_ids(self) -> list[str]:
+        """List bt adapters."""
+        return [adapter_id for bt_manager in self.bt_managers for adapter_id in bt_manager.adapters]
+
+    def has_available_adapters(self) -> bool:
+        """Check if the coordinator has available adapters."""
+        return any(len(bt_manager.adapters) > 0 for bt_manager in self.bt_managers)
+
+    async def on_adapter_change(self, adapter_id: str, _: bool) -> None:
+        """Update device availability and adapter macs on Adapter added / removed."""
+        for device in self._devices:
+            if adapter_id in device.adapter_ids:
+                device.update_availability()
+        self._adapter_macs.clear()
+        for bt_manager in self.bt_managers:
+            self._adapter_macs.update(x.mac for x in bt_manager.adapters.values())
+
+    async def on_stop_event(self, _: Event) -> None:
+        """Act on stop event."""
+        await self.async_final()
+
+    def is_listening(self) -> bool:
+        """Return if listening."""
+        if self._stop_listening_time is not None and datetime.now() > self._stop_listening_time:
+            self._stop_listening_time = None
+        return self._stop_listening_time is not None
+
+    def start_listening(self, max_duration: float) -> None:
+        """Start listening to raw and decoded ADVs."""
+        self._stop_listening_time = datetime.now() + timedelta(seconds=max_duration)
+        self.listened_raw_advs.clear()
+        self.listened_decoded_confs.clear()
+
+    def _recompute_in_use_codecs(self) -> None:
+        match_ids = {self.codecs[codec_id].match_id for x in self._devices for codec_id in x.in_use_codec_ids}
+        self._in_use_codecs = {x.codec_id for x in self.codecs.values() if x.match_id in match_ids}
+
+    def add_device(self, device: BleAdvBaseDevice) -> None:
+        """Register a device."""
+        self._devices.append(device)
+        self._recompute_in_use_codecs()
+        self._raw_last_advs.clear()
+        self._add_diag(f"Registered device '{device.unique_id}'")
+
+    def remove_device(self, device: BleAdvBaseDevice) -> None:
+        """Unregister a device."""
+        self._devices = [x for x in self._devices if x.unique_id != device.unique_id]
+        self._recompute_in_use_codecs()
+        self._dec_last_advs.clear()
+        self._add_diag(f"Unregistered device '{device.unique_id}'")
+
+    async def advertise(self, adapter_id: str | None, queue_id: str, qi: BleAdvQueueItem) -> None:
+        """Advertise."""
+        for bt_manager in self.bt_managers:
+            if adapter_id in bt_manager.adapters:
+                await bt_manager.adapters[adapter_id].enqueue(queue_id, qi)
+                return
+        self._add_diag(f"Cannot process advertising: adapter '{adapter_id}' is not available.", logging.ERROR)
+
+    async def inject_raw(self, dt: dict[str, Any]) -> dict[str, str]:
+        """Injects a raw advertisement."""
+        if dt[CONF_ADAPTER_ID] not in self.get_adapter_ids():
+            return {CONF_ADAPTER_ID: f"Should be in {self.get_adapter_ids()}"}
+        try:
+            raw = bytes.fromhex(dt[CONF_RAW].replace(".", ""))
+        except ValueError:
+            return {CONF_RAW: "Cannot convert to bytes"}
+        ign_duration = 4 * dt[CONF_REPEAT] * dt[CONF_INTERVAL]
+        qi: BleAdvQueueItem = BleAdvQueueItem(None, dt[CONF_REPEAT], dt[CONF_DURATION], dt[CONF_INTERVAL], [raw], ign_duration)
+        await self.advertise(dt[CONF_ADAPTER_ID], dt[CONF_DEVICE_QUEUE], qi)
+        return {}
+
+    def decode_raw(self, raw_adv_str: str) -> list[str]:
+        """Decode a Raw ADV."""
+        try:
+            raw_adv = bytes.fromhex(raw_adv_str.replace(".", ""))
+        except ValueError:
+            return ["Cannot convert to bytes"]
+        adv = BleAdvAdvertisement.FromRaw(raw_adv)
+        for codec_id, acodec in self.codecs.items():
+            enc_cmd, conf = acodec.decode_adv(adv)
+            if conf is not None and enc_cmd is not None:
+                old_codec = codec_from_dyn_base(codec_id, conf.codec_params) if conf.codec_params else codec_id
+                common_data = [raw_adv.hex().upper(), repr(enc_cmd), repr(conf)]
+                for tr_set in acodec.get_translator_sets():
+                    ent_attrs = acodec.enc_to_ent(enc_cmd, tr_set)
+                    attr_str = " / ".join([repr(x) for x in ent_attrs])
+                    common_data.append(attr_str if tr_set == BleAdvCodec.DEF_TRANS_NAME else f"<{tr_set}> {attr_str}")
+                return [codec_id, repr(conf.codec_params), *common_data] if old_codec is None else [old_codec, *common_data]
+        return ["Could not be decoded by any known codec"]
+
+    async def _publish_to_devices(self, adapter_id: str, recv: BleAdvRecvItem) -> None:
+        # Publish to any device that matches, if not already done
+        for device in self._devices:
+            if device.unique_id not in recv.pub_devices and (ct := device.match(recv.codec.match_id, adapter_id, recv.conf)) is not None:
+                cons_cmd = copy(recv.enc_cmd)  # work on a copy to avoid the alteration of the command
+                if (cons_cmd := recv.codec.consolidate(cons_cmd, device.prev_cmd)) is not None:
+                    if (
+                        ((recv.conf.tx_count == 0) and (recv.conf.seed == 0))  # TX Count AND Seed not setup: always valid
+                        or (recv.conf.tx_count != device.prev_tx_count)  # TX Count different from last one recv
+                        or (recv.conf.seed != device.prev_seed)  # Seed different from last one recv
+                    ):
+                        await device.async_on_enc_cmd(cons_cmd)
+                        await device.async_on_command(recv.codec.enc_to_ent(cons_cmd, device.translator_set), not ct)
+                    else:
+                        self._add_diag("Ignored as duplicated TX Count or Seed")
+                device.prev_tx_count = recv.conf.tx_count
+                device.prev_seed = recv.conf.seed
+                device.prev_cmd = recv.enc_cmd
+                recv.pub_devices.add(device.unique_id)
+
+    def _handle_listening(self, adapter_id: str, _: str, raw_adv: bytes) -> None:
+        if raw_adv not in self.listened_raw_advs:
+            self.listened_raw_advs.append(raw_adv)
+        for codec_id, acodec in self.codecs.items():
+            __, conf = acodec.decode_adv(BleAdvAdvertisement.FromRaw(raw_adv))
+            if conf is not None:
+                data = (adapter_id, codec_id, acodec.match_id, acodec.match_params, conf)
+                if data not in self.listened_decoded_confs:
+                    self.listened_decoded_confs.append(data)
+
+    async def handle_raw_adv(self, adapter_id: str, orig: str, raw_adv: bytes) -> None:
+        """Handle a raw advertising."""
+        try:
+            # check if the received orig is in the ignored macs, adapter macs, or if too short to be considered
+            if orig in self.ign_macs or orig in self._adapter_macs or len(raw_adv) < 8:
+                return
+
+            # Parse the raw data and find the relevant info ble_type and raw
+            adv = BleAdvAdvertisement.FromRaw(raw_adv)
+
+            # Exclude by Company ID
+            if int.from_bytes(adv.raw[:2], "little") in self.ign_cids:
+                return
+
+            self._add_diag(f"{orig} - {raw_adv.hex().upper()}", logging.NOTSET)
+
+            # Clean-up last raw / decoded advs based on expiry date
+            now = datetime.now()
+            self._raw_last_advs = {x: y for x, y in self._raw_last_advs.items() if (y > now)}
+            self._dec_last_advs = {x: y for x, y in self._dec_last_advs.items() if (y.del_time > now)}
+
+            # Check if already present in last raw advs: extend exclusion duration
+            if raw_adv in self._raw_last_advs:
+                self._raw_last_advs[raw_adv] = now + timedelta(milliseconds=self.ign_duration)
+                return
+
+            if self.is_listening():
+                self._handle_listening(adapter_id, orig, raw_adv)
+
+            # Check if already present in last decoded advs: re check another matching device with different adapter
+            if adv.raw in self._dec_last_advs:
+                await self._publish_to_devices(adapter_id, self._dec_last_advs[adv.raw])
+                return
+
+            # Try to decode Adv with in used codecs only
+            recv = None
+            for codec_id in self._in_use_codecs:
+                acodec = self.codecs[codec_id]
+                enc_cmd, conf = acodec.decode_adv(adv)
+                if conf is not None and enc_cmd is not None:
+                    recv = BleAdvRecvItem(now + timedelta(milliseconds=acodec.ign_duration), acodec, set(), conf, enc_cmd)
+                    await self._publish_to_devices(adapter_id, recv)
+                    self._dec_last_advs[adv.raw] = recv
+
+            # Not decoded by in_used codecs: consider raw and ignored during the next standard ign_duration
+            if not recv:
+                self._raw_last_advs[raw_adv] = now + timedelta(milliseconds=self.ign_duration)
+
+        except Exception:
+            self._add_diag(f"[{adapter_id}] Exception handling raw adv message", logging.INFO)
+            _LOGGER.exception(f"[{adapter_id}] Exception handling raw adv message")
+
+    def diagnostic_dump(self) -> dict[str, Any]:
+        """Dump diagnostc dict."""
+        return {
+            "bt_managers": {bt_manager.name: bt_manager.diagnostic_dump() for bt_manager in self.bt_managers},
+            "ign_adapters": self.ign_adapters,
+            "ign_duration": self.ign_duration,
+            "ign_cids": list(self.ign_cids),
+            "ign_macs": list(self.ign_macs),
+            "keep_recv": self._diags.maxlen,
+            "maintainer_menus": self.maintainer_menus,
+            "adapter_macs": list(self._adapter_macs),
+            "last_unk_raw": {x.hex().upper(): y for x, y in self._raw_last_advs.items()},
+            "last_dec_raw": {x.hex().upper(): y for x, y in self._dec_last_advs.items()},
+            "logs": list(self._diags),
+        }
+
+    async def full_diagnostic_dump(self) -> dict[str, Any]:
+        """Dump Full diagnostic dict including system data."""
+        hass_sys_info = await async_get_system_info(self.hass)
+        hass_sys_info["run_as_root"] = hass_sys_info["user"] == "root"
+        del hass_sys_info["user"]
+        return {
+            "home_assistant": hass_sys_info,
+            "manifest": async_format_manifest((await async_get_integration(self.hass, DOMAIN)).manifest),
+            "coordinator": self.diagnostic_dump(),
+            "entries": {entry_id: self.hass.config_entries.async_get_entry(entry_id) for entry_id in self.hass.data.get(DOMAIN, {})},
+        }

@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/colorwheel.tsx","./src/components/pairingmodal.tsx","./src/components/settingsview.tsx","./src/hooks/uselatestdebounce.ts","./src/services/api.ts","./src/types/lamp.ts","./src/utils/color.ts"],"version":"5.9.3"}

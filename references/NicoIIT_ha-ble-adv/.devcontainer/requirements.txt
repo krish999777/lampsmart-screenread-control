@@ -1,0 +1,28 @@
+# To upgrade homeassistant version:
+# 1. Update the version below, align the version of:
+#    * pytest-homeassistant-custom-component from the release https://github.com/MatthewFlamm/pytest-homeassistant-custom-component/releases
+#    * Dockerfile Python version from the one of pytest-homeassistant-custom-component one
+# 2. Remove the content of the file 'req_ha_default_config'
+# 3. Rebuild the container
+# 4. run the same command several time until there is no output anymore:
+#     timeout 60 hass -c config |& sed -n -e 's/.*Attempting install of //p'
+# 5. copy the output to the file 'req_ha_default_config'
+# 6. Rebuild the container
+# 7. Check the 'hass -c config' starts without the need to install new pip packets
+# 8. Run 'pytest' and correct tests if needed
+# 9. Update the hacs.json file
+homeassistant==2026.8.3
+
+# ble_adv requirements
+pycryptodome==3.23.0
+btsocket==0.3.0
+aioshelly==13.29.0
+
+# for unit tests
+pytest-homeassistant-custom-component==0.13.357
+colorlog==6.12.0
+ruff==0.17.4
+
+# needed for shelly component used by Unit Tests
+aiousbwatcher==1.1.2
+serialx==1.10.0

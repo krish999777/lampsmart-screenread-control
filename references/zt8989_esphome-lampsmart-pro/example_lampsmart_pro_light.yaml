@@ -1,0 +1,49 @@
+esphome:
+  name: lampsmart_pro_light
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  password: ""
+  custom_services: true
+
+ota:
+  - platform: esphome
+    password: ""
+
+wifi:
+  ssid: ""
+  password: ""
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Lampsmart Pro Light"
+    password: ""
+
+captive_portal:
+    
+external_components:
+  - source:
+      type: github://zt8989/esphome-lampsmart-pro
+      path: components
+    components: [lampsmart_pro_light]
+
+light:
+  - platform: lampsmart_pro_light
+    name: Bed Room Light
+    group: 1
+    default_transition_length: 0s
+    duration: 500
+
+fan:
+  - platform: lampsmart_pro_light
+    group: 1
+    name: Bed Room Fan
+    duration: 500

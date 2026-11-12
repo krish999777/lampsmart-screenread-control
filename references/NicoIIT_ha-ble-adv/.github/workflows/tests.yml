@@ -1,0 +1,51 @@
+name: Python tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "main"
+  pull_request:
+    branches:
+      - "main"
+
+jobs:
+  get_image_version:
+    runs-on: ubuntu-latest
+    outputs:
+      python_version: ${{ steps.version.outputs.python_version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: version
+        name: Set the Python image version
+        run: echo "python_version=$(grep FROM .devcontainer/Dockerfile | cut -d ':' -f 2)" >> $GITHUB_OUTPUT
+
+  tests:
+    needs: get_image_version
+    runs-on: ubuntu-latest
+    steps:
+      # Setup
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{needs.get_image_version.outputs.python_version}}
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -r .devcontainer/requirements.txt
+
+      # PyTest
+      - name: Test with pytest
+        run: |
+          export PYTHONPATH=:custom_components
+          pytest
+
+      # Ruff
+      - name: "Ruff Lint"
+        run: python3 -m ruff check .
+      - name: "Ruff Format"
+        run: python3 -m ruff format . --check

@@ -1,0 +1,1016 @@
+"""FanLamp pro Unit Tests."""
+
+# ruff: noqa: S101
+
+from copy import copy
+
+import pytest
+from ble_adv.codecs.models import BleAdvAdvertisement, BleAdvCodec, BleAdvEncCmd
+
+from . import CODECS, _TestEncoderBase, _TestEncoderBaseParams, _TestEncoderFull, _TestEncoderFullAll
+
+
+@pytest.mark.parametrize(
+    _TestEncoderBase.PARAM_NAMES,
+    [
+        ("fanlamp_pro_v1/r0", 0xFF, "F0.FF.B6.5F.2B.5E.00.FC.31.51.D0.7E.99.08.24.CB.3B.FC.31.A3.F4.55.E8.CF.A7.52"),  # Light ON
+        ("fanlamp_pro_v1/r0", 0xFF, "F0.FF.B6.5F.2B.5E.00.FC.31.51.D0.7E.99.08.24.CB.BB.FC.70.67.F4.55.E8.4F.D0.7D"),  # Light ON
+        ("fanlamp_pro_v1/r0", 0xFF, "F0.FF.B6.5F.2B.5E.00.FC.31.51.D0.7E.99.08.24.CB.7B.FC.70.67.F4.55.28.CF.61.9D"),  # Light ON
+        ("fanlamp_pro_v1/r0", 0xFF, "F0.FF.B6.5F.2B.5E.00.FC.31.51.D0.7E.99.08.24.CB.FB.FC.70.67.F4.55.A8.CF.4F.DA"),  # Light ON
+        ("fanlamp_pro_v1/r0", 0xFF, "F0.FF.B6.5F.2B.5E.00.FC.31.51.2E.7E.99.08.24.CB.BB.FC.70.67.F4.55.E8.4F.07.2A"),  # ALL OFF
+        ("fanlamp_pro_v1/r0", 0xFF, "F0.FF.B6.5F.2B.5E.00.FC.31.51.D8.7E.99.08.24.CB.BB.FC.70.67.F4.55.E8.4F.B3.92"),  # Fan OFF / Pair
+        ("fanlamp_pro_v1/r0", 0xFF, "F0FFB65F2B5E00FC3151B8469B0824CA3BFCD1A3F45528CFF39E"),  # B+, step 0
+    ],
+)
+class TestEncoderFanlampV0R0(_TestEncoderBase):
+    """FanlampV0 / R0 Encoder tests."""
+
+
+@pytest.mark.parametrize(
+    _TestEncoderBase.PARAM_NAMES,
+    [
+        ("fanlamp_pro_v1/r1", 0xFF, "F0FFB65F2B5E00FC3151942B998824CBBBFC71A3F45568CFA919"),
+        ("fanlamp_pro_v1/r1", 0xFF, "F0FFB65F2B5E00FC3151942B998824CB7BFC71A3F45568CFA919"),
+        ("fanlamp_pro_v1/r1", 0xFF, "F0FFB65F2B5E00FC3151942B998824CBFBFC71A3F45568CFA919"),
+        ("fanlamp_pro_v1/r1", 0xFF, "F0FFB65F2B5E00FC3151942B998824CB1BFC71A3F45568CFA919"),
+    ],
+)
+class TestEncoderFanlampV0R1(_TestEncoderBase):
+    """FanlampV0 / R1 Encoder tests."""
+
+
+@pytest.mark.parametrize(
+    _TestEncoderBaseParams.PARAM_NAMES,
+    [
+        ("lampsmart_pro_v2", [True, [0x31, 0x82, 0x00]], 0x03, "f0.08.31.82.36.6a.fd.5a.67.3f.05.8f.18.74.77.0f.91.7f.00.ca.fb.c6.53.2b.3b.00"),
+    ],
+)
+class TestDyn(_TestEncoderBaseParams):
+    """Fanlamp Encoder Dynamic decoding tests."""
+
+
+@pytest.mark.parametrize(
+    _TestEncoderBase.PARAM_NAMES,
+    [
+        ("fanlamp_pro_v1", 0x03, "77.F8.B6.5F.2B.5E.00.FC.31.51.50.FE.D2.08.24.0A.73.FC.08.66.F4.90.14.AF.B4.E5"),
+        ("fanlamp_pro_v1", 0x03, "77.F8.B6.5F.2B.5E.00.FC.31.51.CC.FE.D2.4C.2E.0A.33.FC.7E.10.F4.E6.C0.1C.7B.74"),
+        ("fanlamp_pro_v1", 0x03, "77.F8.B6.5F.2B.5E.00.FC.31.51.50.FE.D2.08.24.0A.3B.FC.D6.B8.4A.4E.31.20.A9.3E"),
+        ("fanlamp_pro_v2", 0x03, "F0.08.10.80.B8.52.E1.22.C6.F2.D3.A7.67.7C.A4.9F.67.F6.B6.A2.22.8B.53.2B.01.6B"),
+        ("fanlamp_pro_v3", 0x03, "F0.08.20.80.B8.52.E1.22.C6.F2.D3.A7.67.7C.A4.9F.67.F6.B6.B7.41.8B.53.2B.E9.59"),
+        ("fanlamp_pro_v3", 0x03, "F0.08.20.80.8A.3F.2F.22.B9.F2.DB.03.FC.F8.68.C1.28.0C.1D.C3.6E.DA.19.48.88.61"),
+        ("fanlamp_pro_v3/s2", 0x03, "F0.08.20.82.36.38.FD.5F.91.3D.7A.8B.1B.7D.77.0F.91.80.FF.FF.A5.C6.53.2B.D5.2A"),
+        ("fanlamp_pro_vi3/s2", 0x03, "F0.08.30.82.FD.F0.93.59.87.F4.03.02.D9.DF.08.52.B2.EA.71.93.89.69.3F.57.C5.B3"),
+        ("lampsmart_pro_v1", 0x03, "77.F8.B6.5F.2B.5E.00.FC.31.51.CC.AF.92.1D.2E.4A.1B.FC.EC.A1.F4.57.3E.64.04.58"),
+        ("lampsmart_pro_v3/s2", 0x03, "F0.08.30.82.36.3C.FD.5A.1B.3E.A5.75.1A.7D.77.0F.91.80.FF.0C.8F.C6.53.2B.8C.CA"),
+        ("lampsmart_pro_vi1", 0x03, "F9.08.49.13.F0.69.25.4E.31.51.BA.AE.25.02.99.C1.BA.7C.71.94.84.55.18.CA.EC.4C"),
+        ("lampsmart_pro_vi3", 0x03, "F0.08.21.80.0B.B5.DA.CF.F3.B5.A7.A0.3B.E9.1C.FC.27.A9.3A.34.0E.2D.3F.57.B9.81"),
+        ("lampsmart_pro_v3/s2_1", 0x03, "F0.08.20.82.FD.02.93.5C.89.FD.9B.F1.D8.DF.08.52.B2.EA.71.77.D7.69.3F.57.DE.AD"),
+        ("lampsmart_pro_v1/r1", 0xFF, "62.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.CC.3D.95.8F.29.CB.56.BA.C8.1A.E1.6C.73.7E.60.57"),  # PAIR
+        ("lampsmart_pro_v1/r1", 0xFF, "62.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.50.3D.95.08.24.CB.3B.FC.AE.7C.88.0A.CB.89.60.57"),  # Light Toogle
+        ("lampsmart_pro_v3/r1", 0x16, "F0.08.10.00.EA.44.8A.9E.16.71.9D.AB.3F.D0.3A.70.1E.AB.BB.7F.86.41.8D.BE.E9.57"),
+        ("remote_v1", 0xFF, "56.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.50.50.9A.08.24.0A.EC.FC.A9.7B.8E.0D.4A.67.60.57"),
+        ("remote_v1", 0xFF, "56.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.54.50.9A.08.24.0A.96.FC.F5.27.DB.51.D3.43.60.57"),
+        ("remote_v3", 0x16, "F0.08.10.00.5B.B5.CC.F3.7B.EB.FC.C8.4A.F2.0A.2E.3F.FC.18.05.F7.AD.3B.BD.17.A6"),
+        ("fanlamp_pro_v3/r3", 0x16, "F008100056C024C00B681C9C002487E5CC20B538A9FA07A36F3C"),
+        ("fanlamp_pro_v1/r3", 0xFF, "5555188752B65F2B5E00FC315154339A08240A3BFC9C4E413837B16057"),
+        ("other_v1b", 0x16, "F9.08.49.13.F0.69.25.4E.31.51.BA.32.08.0A.24.CB.3B.7C.71.DC.8B.B8.97.08.D0.4C"),
+        ("other_v1a", 0x03, "77.F8.B6.5F.2B.5E.00.FC.31.51.50.CB.92.08.24.CB.BB.FC.14.C6.9E.B0.E9.EA.73.A4"),
+        ("other_v2", 0x16, "F0.08.10.80.0B.9B.DA.CF.BE.B3.DD.56.3B.E9.1C.FC.27.A9.3A.A5.38.2D.3F.D4.6A.50"),
+        ("other_v3", 0x16, "F0.08.10.80.33.BC.2E.B0.49.EA.58.76.C0.1D.99.5E.9C.D6.B8.0E.6E.14.2B.A5.30.A9"),
+    ],
+)
+class TestEncoderFanlamp(_TestEncoderBase):
+    """Fanlamp Encoder tests."""
+
+
+@pytest.mark.parametrize(
+    _TestEncoderBase.PARAM_NAMES,
+    [
+        ("lampsmart_pro_v1", 0x03, "77.F8.B6.5F.2B.5E.00.FC.31.51.9C.FE.D2.DE.6E.34.A9.FC.6B.05.F4.F3.34.89.B2.3D"),
+        ("fanlamp_pro_v1", 0x03, "77.F8.B6.5F.2B.5E.00.FC.31.51.9C.FE.D2.CE.1E.34.CC.FC.0B.65.F4.93.CF.BD.43.EB"),
+    ],
+)
+class TestEncoderFanlampDupe(_TestEncoderBase):
+    """Fan Lamp Encoder tests with duplicate codecs (RGB case)."""
+
+    _dupe_allowed = True
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFull.PARAM_NAMES,
+    [
+        # PAIR
+        (
+            "fanlamp_pro_v3",
+            "02.01.19.1B.03.F0.08.20.80.B8.01.E1.22.C6.F2.D3.A7.67.44.A4.9F.67.F6.B6.78.45.8B.53.2B.B9.1B",
+            "cmd: 0x28, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 117, seed: 0x2B53",
+            "device_0: ['cmd'] / {'cmd': 'pair'}",
+        ),
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.CC.FE.D2.4C.2E.0A.5D.FC.AD.C3.F4.35.F3.2B.AF.85",
+            "cmd: 0x28, param: 0x00, args: [0,0,0]",
+            "id: 0x003D5022, index: 2, tx: 102, seed: 0x0006",
+            "device_0: ['cmd'] / {'cmd': 'pair'}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.01.E1.22.C6.F2.D3.A7.67.44.A4.9F.67.F6.B6.A2.22.8B.53.2B.E1.B5",
+            "cmd: 0x28, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 117, seed: 0x2B53",
+            "device_0: ['cmd'] / {'cmd': 'pair'}",
+        ),
+        (
+            "lampsmart_pro_v1/r1",
+            "1E.FF.62.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.CC.3D.95.8F.29.CB.56.BA.C8.1A.E1.6C.73.7E.60.57",
+            "cmd: 0x28, param: 0x00, args: [0,0,0]",
+            "id: 0x0001B0E1, index: 0, tx: 182, seed: 0xA89C",
+            "device_0: ['cmd'] / {'cmd': 'pair'}",
+        ),
+        (
+            "lampsmart_pro_v3/r1",
+            "02.01.02.1B.16.F0.08.10.00.EA.44.8A.9E.16.71.9D.AB.3F.D0.3A.70.1E.AB.BB.7F.86.41.8D.BE.E9.57",
+            "cmd: 0x28, param: 0x00, args: [0,0,0]",
+            "id: 0x01FB1E1B, index: 0, tx: 83, seed: 0xBE8D",
+            "device_0: ['cmd'] / {'cmd': 'pair'}",
+        ),
+        # MAIN LIGHT OFF
+        (
+            "fanlamp_pro_v3",
+            "02.01.19.1B.03.F0.08.20.80.B8.65.E1.22.C6.F2.D3.A7.67.7D.A4.9F.67.F6.B6.6B.65.8B.53.2B.2E.AA",
+            "cmd: 0x11, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 17, seed: 0x2B53",
+            "light_0: ['on'] / {'on': False}",
+        ),
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.50.FE.D2.08.24.0A.7B.FC.7C.12.F4.E4.60.70.21.7F",
+            "cmd: 0x11, param: 0x00, args: [0,0,0]",
+            "id: 0x003D5022, index: 2, tx: 2, seed: 0x008D",
+            "light_0: ['on'] / {'on': False}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.65.E1.22.C6.F2.D3.A7.67.7D.A4.9F.67.F6.B6.A2.22.8B.53.2B.B0.D9",
+            "cmd: 0x11, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 17, seed: 0x2B53",
+            "light_0: ['on'] / {'on': False}",
+        ),
+        # MAIN LIGHT ON
+        (
+            "fanlamp_pro_v3",
+            "02.01.1A.1B.03.F0.08.20.80.B8.64.E1.22.C6.F2.D3.A7.67.7C.A4.9F.67.F6.B6.25.33.8B.53.2B.1A.20",
+            "cmd: 0x10, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 16, seed: 0x2B53",
+            "light_0: ['on'] / {'on': True}",
+        ),
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.D0.FE.D2.08.24.0A.BB.FC.1D.73.F4.85.8C.0B.7D.AC",
+            "cmd: 0x10, param: 0x00, args: [0,0,0]",
+            "id: 0x003D5022, index: 2, tx: 1, seed: 0x000B",
+            "light_0: ['on'] / {'on': True}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.64.E1.22.C6.F2.D3.A7.67.7C.A4.9F.67.F6.B6.A2.22.8B.53.2B.E6.DF",
+            "cmd: 0x10, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 16, seed: 0x2B53",
+            "light_0: ['on'] / {'on': True}",
+        ),
+        # BR 10 %
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.5C.FE.D2.90.BC.0A.AE.FC.F7.99.F4.6F.F9.F5.1C.9A",
+            "cmd: 0x21, param: 0x00, args: [25,25,0]",
+            "id: 0x003D5022, index: 2, tx: 169, seed: 0x005C",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 0.09803921568627451, 'warm': 0.09803921568627451}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.CC.E1.22.C6.F2.D3.A7.67.4D.A4.9F.67.EF.AF.A2.22.8B.53.2B.74.D4",
+            "cmd: 0x21, param: 0x00, args: [0,25,25]",
+            "id: 0xD2135C22, index: 2, tx: 184, seed: 0x2B53",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 0.09803921568627451, 'warm': 0.09803921568627451}",
+        ),
+        (
+            "fanlamp_pro_v3",
+            "02.01.19.1B.03.F0.08.20.80.B8.CC.E1.22.C6.F2.D3.A7.67.4D.A4.9F.67.EF.AF.0D.5B.8B.53.2B.00.FD",
+            "cmd: 0x21, param: 0x00, args: [0,25,25]",
+            "id: 0xD2135C22, index: 2, tx: 184, seed: 0x2B53",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 0.09803921568627451, 'warm': 0.09803921568627451}",
+        ),
+        # BR 100 %
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.5C.FE.D2.F7.DB.0A.0F.FC.F8.96.F4.60.22.DA.37.AF",
+            "cmd: 0x21, param: 0x00, args: [255,255,0]",
+            "id: 0x003D5022, index: 2, tx: 44, seed: 0x00AC",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 1.0}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.4F.E1.22.C6.F2.D3.A7.67.4D.A4.9F.67.09.49.A2.22.8B.53.2B.A2.8B",
+            "cmd: 0x21, param: 0x00, args: [0,255,255]",
+            "id: 0xD2135C22, index: 2, tx: 59, seed: 0x2B53",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 1.0}",
+        ),
+        (
+            "fanlamp_pro_v3",
+            "02.01.19.1B.03.F0.08.20.80.B8.4F.E1.22.C6.F2.D3.A7.67.4D.A4.9F.67.09.49.82.9F.8B.53.2B.AA.9C",
+            "cmd: 0x21, param: 0x00, args: [0,255,255]",
+            "id: 0xD2135C22, index: 2, tx: 59, seed: 0x2B53",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 1.0}",
+        ),
+        # COLD
+        (
+            "fanlamp_pro_v1",
+            "02.01.1A.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.5C.FE.D2.F7.24.0A.97.FC.14.7A.F4.8C.F4.B3.B8.84",
+            "cmd: 0x21, param: 0x00, args: [255,0,0]",
+            "id: 0x003D5022, index: 2, tx: 53, seed: 0x009B",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 0.0}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.30.E1.22.C6.F2.D3.A7.67.4D.A4.9F.67.09.B6.A2.22.8B.53.2B.AF.E4",
+            "cmd: 0x21, param: 0x00, args: [0,255,0]",
+            "id: 0xD2135C22, index: 2, tx: 68, seed: 0x2B53",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 0.0}",
+        ),
+        (
+            "fanlamp_pro_v3",
+            "02.01.1A.1B.03.F0.08.20.80.B8.30.E1.22.C6.F2.D3.A7.67.4D.A4.9F.67.09.B6.12.05.8B.53.2B.19.7B",
+            "cmd: 0x21, param: 0x00, args: [0,255,0]",
+            "id: 0xD2135C22, index: 2, tx: 68, seed: 0x2B53",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 0.0}",
+        ),
+        # WARM
+        (
+            "fanlamp_pro_v1",
+            "02.01.1A.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.5C.FE.D2.08.DB.0A.E7.FC.B0.DE.F4.28.60.49.0E.E1",
+            "cmd: 0x21, param: 0x00, args: [0,255,0]",
+            "id: 0x003D5022, index: 2, tx: 59, seed: 0x00BE",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 0.0, 'warm': 1.0}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.1A.1B.03.F0.08.10.80.B8.3E.E1.22.C6.F2.D3.A7.67.4D.A4.9F.67.F6.49.A2.22.8B.53.2B.5F.61",
+            "cmd: 0x21, param: 0x00, args: [0,0,255]",
+            "id: 0xD2135C22, index: 2, tx: 74, seed: 0x2B53",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 0.0, 'warm': 1.0}",
+        ),
+        (
+            "fanlamp_pro_v3",
+            "02.01.1A.1B.03.F0.08.20.80.B8.3E.E1.22.C6.F2.D3.A7.67.4D.A4.9F.67.F6.49.C2.82.8B.53.2B.1E.45",
+            "cmd: 0x21, param: 0x00, args: [0,0,255]",
+            "id: 0xD2135C22, index: 2, tx: 74, seed: 0x2B53",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 0.0, 'warm': 1.0}",
+        ),
+        # FAN ON SPEED 2 / 6
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.94.FE.D2.48.44.0A.35.FC.0A.64.F4.92.75.78.EE.EE",
+            "cmd: 0x32, param: 0x00, args: [2,6,0]",
+            "id: 0x003D5022, index: 2, tx: 112, seed: 0x00E3",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 2.0}",
+        ),
+        (
+            "fanlamp_pro_v3",
+            "02.01.1A.1B.03.F0.08.20.80.B8.0B.E1.22.C6.F2.D3.A7.67.5D.A4.9F.47.F4.B6.5B.33.8B.53.2B.63.90",
+            "cmd: 0x31, param: 0x00, args: [32,2,0]",
+            "id: 0xD2135C22, index: 2, tx: 127, seed: 0x2B53",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 2.0}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.1A.1B.03.F0.08.10.80.B8.0B.E1.22.C6.F2.D3.A7.67.5D.A4.9F.47.F4.B6.A2.22.8B.53.2B.B1.BD",
+            "cmd: 0x31, param: 0x00, args: [32,2,0]",
+            "id: 0xD2135C22, index: 2, tx: 127, seed: 0x2B53",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 2.0}",
+        ),
+        # FAN OFF
+        (
+            "fanlamp_pro_v3",
+            "02.01.1A.1B.03.F0.08.20.80.B8.F4.E1.22.C6.F2.D3.A7.67.5D.A4.9F.47.F6.B6.D9.13.8B.53.2B.E6.08",
+            "cmd: 0x31, param: 0x00, args: [32,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 128, seed: 0x2B53",
+            "fan_0: ['on'] / {'speed_count': 6, 'on': False}",
+        ),
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.54.FE.D2.08.24.0A.B5.FC.20.4E.F4.B8.F3.E9.7C.7D",
+            "cmd: 0x31, param: 0x00, args: [0,0,0]",
+            "id: 0x003D5022, index: 2, tx: 113, seed: 0x00B7",
+            "fan_0: ['on'] / {'on': False}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.F4.E1.22.C6.F2.D3.A7.67.5D.A4.9F.47.F6.B6.A2.22.8B.53.2B.29.74",
+            "cmd: 0x31, param: 0x00, args: [32,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 128, seed: 0x2B53",
+            "fan_0: ['on'] / {'speed_count': 6, 'on': False}",
+        ),
+        # FAN Direction Reverse
+        (
+            "fanlamp_pro_v1",
+            "02.01.1A.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.70.FE.D2.88.24.0A.E5.FC.73.1D.F4.EB.32.FD.0A.4A",
+            "cmd: 0x15, param: 0x00, args: [1,0,0]",
+            "id: 0x003D5022, index: 2, tx: 123, seed: 0x007D",
+            "fan_0: ['dir'] / {'dir': False}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.1A.1B.03.F0.08.10.80.B8.FE.E1.22.C6.F2.D3.A7.67.79.A4.9F.66.F6.B6.A2.22.8B.53.2B.8E.8F",
+            "cmd: 0x15, param: 0x00, args: [1,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 138, seed: 0x2B53",
+            "fan_0: ['dir'] / {'dir': False}",
+        ),
+        (
+            "fanlamp_pro_v3",
+            "02.01.1A.1B.03.F0.08.20.80.B8.FE.E1.22.C6.F2.D3.A7.67.79.A4.9F.66.F6.B6.6B.7A.8B.53.2B.59.33",
+            "cmd: 0x15, param: 0x00, args: [1,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 138, seed: 0x2B53",
+            "fan_0: ['dir'] / {'dir': False}",
+        ),
+        # FAN Direction Forward
+        (
+            "fanlamp_pro_v3",
+            "02.01.1A.1B.03.F0.08.20.80.B8.FF.E1.22.C6.F2.D3.A7.67.79.A4.9F.67.F6.B6.E3.A9.8B.53.2B.B7.B9",
+            "cmd: 0x15, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 139, seed: 0x2B53",
+            "fan_0: ['dir'] / {'dir': True}",
+        ),
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.70.FE.D2.08.24.0A.05.FC.13.7D.F4.8B.D6.6B.FB.9C",
+            "cmd: 0x15, param: 0x00, args: [0,0,0]",
+            "id: 0x003D5022, index: 2, tx: 124, seed: 0x007B",
+            "fan_0: ['dir'] / {'dir': True}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.FF.E1.22.C6.F2.D3.A7.67.79.A4.9F.67.F6.B6.A2.22.8B.53.2B.42.16",
+            "cmd: 0x15, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 139, seed: 0x2B53",
+            "fan_0: ['dir'] / {'dir': True}",
+        ),
+        # FAN Oscillation ON
+        (
+            "fanlamp_pro_v3",
+            "02.01.19.1B.03.F0.08.20.80.B8.F9.E1.22.C6.F2.D3.A7.67.7A.A4.9F.66.F6.B6.72.28.8B.53.2B.C9.45",
+            "cmd: 0x16, param: 0x00, args: [1,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 141, seed: 0x2B53",
+            "fan_0: ['osc'] / {'osc': True}",
+        ),
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.B0.FE.D2.88.24.0A.45.FC.25.4B.F4.BD.62.31.65.6E",
+            "cmd: 0x16, param: 0x00, args: [1,0,0]",
+            "id: 0x003D5022, index: 2, tx: 126, seed: 0x0017",
+            "fan_0: ['osc'] / {'osc': True}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.F9.E1.22.C6.F2.D3.A7.67.7A.A4.9F.66.F6.B6.A2.22.8B.53.2B.6B.CD",
+            "cmd: 0x16, param: 0x00, args: [1,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 141, seed: 0x2B53",
+            "fan_0: ['osc'] / {'osc': True}",
+        ),
+        # FAN Oscillation OFF
+        (
+            "fanlamp_pro_v3",
+            "02.01.19.1B.03.F0.08.20.80.B8.F8.E1.22.C6.F2.D3.A7.67.7A.A4.9F.67.F6.B6.86.02.8B.53.2B.B0.35",
+            "cmd: 0x16, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 140, seed: 0x2B53",
+            "fan_0: ['osc'] / {'osc': False}",
+        ),
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.B0.FE.D2.08.24.0A.85.FC.82.EC.F4.1A.CA.85.24.05",
+            "cmd: 0x16, param: 0x00, args: [0,0,0]",
+            "id: 0x003D5022, index: 2, tx: 125, seed: 0x00F2",
+            "fan_0: ['osc'] / {'osc': False}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.F8.E1.22.C6.F2.D3.A7.67.7A.A4.9F.67.F6.B6.A2.22.8B.53.2B.A7.54",
+            "cmd: 0x16, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 140, seed: 0x2B53",
+            "fan_0: ['osc'] / {'osc': False}",
+        ),
+        # Fan Natural Wind mode
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.14.FE.D2.48.24.0A.63.FC.C9.A7.F4.51.FF.F3.EA.45",
+            "cmd: 0x33, param: 0x00, args: [2,0,0]",
+            "id: 0x003D5022, index: 2, tx: 26, seed: 0x0020",
+            "fan_0: ['on', 'preset'] / {'on': True, 'preset': 'breeze'}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.5D.E1.22.C6.F2.D3.A7.67.5F.A4.9F.65.F6.B6.A2.22.8B.53.2B.06.9C",
+            "cmd: 0x33, param: 0x00, args: [2,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 41, seed: 0x2B53",
+            "fan_0: ['on', 'preset'] / {'on': True, 'preset': 'breeze'}",
+        ),
+        (
+            "fanlamp_pro_v3",
+            "02.01.1A.1B.03.F0.08.20.80.B8.5D.E1.22.C6.F2.D3.A7.67.5F.A4.9F.65.F6.B6.5E.1D.8B.53.2B.97.07",
+            "cmd: 0x33, param: 0x00, args: [2,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 41, seed: 0x2B53",
+            "fan_0: ['on', 'preset'] / {'on': True, 'preset': 'breeze'}",
+        ),
+        # Second Light OFF
+        (
+            "fanlamp_pro_v3",
+            "02.01.19.1B.03.F0.08.20.80.B8.F3.E1.22.C6.F2.D3.A7.67.7F.A4.9F.67.F6.B6.3C.F0.8B.53.2B.35.44",
+            "cmd: 0x13, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 135, seed: 0x2B53",
+            "light_1: ['on'] / {'on': False}",
+        ),
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.10.FE.D2.08.24.CB.25.FC.56.38.F4.CE.EB.D8.B3.EC",
+            "cmd: 0x13, param: 0x00, args: [0,0,0]",
+            "id: 0x003D5022, index: 2, tx: 120, seed: 0x00D9",
+            "light_1: ['on'] / {'on': False}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.F3.E1.22.C6.F2.D3.A7.67.7F.A4.9F.67.F6.B6.A2.22.8B.53.2B.97.3F",
+            "cmd: 0x13, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 135, seed: 0x2B53",
+            "light_1: ['on'] / {'on': False}",
+        ),
+        # Second Light ON
+        (
+            "fanlamp_pro_v3",
+            "02.01.1A.1B.03.F0.08.20.80.B8.FC.E1.22.C6.F2.D3.A7.67.7E.A4.9F.67.F6.B6.AB.62.8B.53.2B.F4.5C",
+            "cmd: 0x12, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 136, seed: 0x2B53",
+            "light_1: ['on'] / {'on': True}",
+        ),
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.90.FE.D2.08.24.CB.A5.FC.AA.C4.F4.32.CC.A9.EC.9D",
+            "cmd: 0x12, param: 0x00, args: [0,0,0]",
+            "id: 0x003D5022, index: 2, tx: 121, seed: 0x00E6",
+            "light_1: ['on'] / {'on': True}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.FC.E1.22.C6.F2.D3.A7.67.7E.A4.9F.67.F6.B6.A2.22.8B.53.2B.FF.4D",
+            "cmd: 0x12, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 136, seed: 0x2B53",
+            "light_1: ['on'] / {'on': True}",
+        ),
+        # Second Light RGB Full RED
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.9C.FE.D2.F7.24.CB.8C.FC.7C.12.F4.E4.D7.38.21.7F",
+            "cmd: 0x22, param: 0x00, args: [255,0,0]",
+            "id: 0x003D5022, index: 2, tx: 237, seed: 0x008D",
+            "light_1: ['rf', 'gf', 'bf'] / {'sub_type': 'rgb', 'rf': 1.0, 'gf': 0.0, 'bf': 0.0}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.09.E1.22.C6.F2.D3.A7.67.4E.A4.9F.98.F6.B6.A2.22.8B.53.2B.AD.B3",
+            "cmd: 0x22, param: 0x00, args: [255,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 125, seed: 0x2B53",
+            "light_1: ['rf', 'gf', 'bf'] / {'sub_type': 'rgb', 'rf': 1.0, 'gf': 0.0, 'bf': 0.0}",
+        ),
+        (
+            "fanlamp_pro_v3",
+            "02.01.19.1B.03.F0.08.20.80.B8.09.E1.22.C6.F2.D3.A7.67.4E.A4.9F.98.F6.B6.5C.74.8B.53.2B.1A.C6",
+            "cmd: 0x22, param: 0x00, args: [255,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 125, seed: 0x2B53",
+            "light_1: ['rf', 'gf', 'bf'] / {'sub_type': 'rgb', 'rf': 1.0, 'gf': 0.0, 'bf': 0.0}",
+        ),
+        # Second Light Effect RGB On
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.A0.FE.D2.08.24.CB.8B.FC.26.48.F4.BE.F3.06.92.60",
+            "cmd: 0x1E, param: 0x00, args: [0,0,0]",
+            "id: 0x003D5022, index: 2, tx: 13, seed: 0x00D7",
+            "light_1: ['effect'] / {'sub_type': 'rgb', 'effect': 'rgb'}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.68.E1.22.C6.F2.D3.A7.67.72.A4.9F.67.F6.B6.A2.22.8B.53.2B.BD.54",
+            "cmd: 0x1E, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 28, seed: 0x2B53",
+            "light_1: ['effect'] / {'sub_type': 'rgb', 'effect': 'rgb'}",
+        ),
+        (
+            "fanlamp_pro_v3",
+            "02.01.19.1B.03.F0.08.20.80.B8.68.E1.22.C6.F2.D3.A7.67.72.A4.9F.67.F6.B6.4E.F5.8B.53.2B.5F.CA",
+            "cmd: 0x1E, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 28, seed: 0x2B53",
+            "light_1: ['effect'] / {'sub_type': 'rgb', 'effect': 'rgb'}",
+        ),
+        # Second Light Effect RGB Off
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.20.FE.D2.08.24.CB.4B.FC.60.0E.F4.F8.82.3D.2D.1E",
+            "cmd: 0x1F, param: 0x00, args: [0,0,0]",
+            "id: 0x003D5022, index: 2, tx: 14, seed: 0x00B5",
+            "light_1: ['effect'] / {'sub_type': 'rgb', 'effect': None}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.69.E1.22.C6.F2.D3.A7.67.73.A4.9F.67.F6.B6.A2.22.8B.53.2B.EB.52",
+            "cmd: 0x1F, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 29, seed: 0x2B53",
+            "light_1: ['effect'] / {'sub_type': 'rgb', 'effect': None}",
+        ),
+        (
+            "fanlamp_pro_v3",
+            "02.01.19.1B.03.F0.08.20.80.B8.69.E1.22.C6.F2.D3.A7.67.73.A4.9F.67.F6.B6.85.2B.8B.53.2B.17.19",
+            "cmd: 0x1F, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 29, seed: 0x2B53",
+            "light_1: ['effect'] / {'sub_type': 'rgb', 'effect': None}",
+        ),
+    ],
+)
+class TestEncoderFanlampFull(_TestEncoderFull):
+    """Fanlamp Encoder / Decoder Full tests."""
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFull.PARAM_NAMES,
+    [
+        # Device ALL OFF (NO REVERSE)
+        (
+            "fanlamp_pro_v3",
+            "02.01.1A.1B.03.F0.08.20.80.B8.E6.E1.22.C6.F2.D3.A7.67.03.A4.9F.67.F6.B6.62.B9.8B.53.2B.42.ED",
+            "cmd: 0x6F, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 146, seed: 0x2B53",
+            "device_0: ['on'] / {'on': False}",
+        ),
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.2E.FE.D2.08.24.0A.FA.FC.49.27.F4.D1.53.76.48.83",
+            "cmd: 0x6F, param: 0x00, args: [0,0,0]",
+            "id: 0x003D5022, index: 2, tx: 131, seed: 0x0021",
+            "device_0: ['on'] / {'on': False}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.E6.E1.22.C6.F2.D3.A7.67.03.A4.9F.67.F6.B6.A2.22.8B.53.2B.91.D1",
+            "cmd: 0x6F, param: 0x00, args: [0,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 146, seed: 0x2B53",
+            "device_0: ['on'] / {'on': False}",
+        ),
+        # Timer 2H (120min / 7200s)
+        (
+            "fanlamp_pro_v3",
+            "02.01.1A.1B.03.F0.08.20.80.B8.FA.E1.22.C6.F2.D3.A7.67.2D.A4.9F.1F.F6.B6.FD.E0.8B.53.2B.D7.97",
+            "cmd: 0x41, param: 0x00, args: [120,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 142, seed: 0x2B53",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 7200.0}",
+        ),
+        (
+            "fanlamp_pro_v1",
+            "02.01.19.1B.03.77.F8.B6.5F.2B.5E.00.FC.31.51.52.FE.D2.16.24.0A.C5.FC.42.2C.F4.DA.A0.DB.D7.A0",
+            "cmd: 0x51, param: 0x00, args: [120,0,0]",
+            "id: 0x003D5022, index: 2, tx: 127, seed: 0x00F1",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 7200.0}",
+        ),
+        (
+            "fanlamp_pro_v2",
+            "02.01.19.1B.03.F0.08.10.80.B8.FA.E1.22.C6.F2.D3.A7.67.2D.A4.9F.1F.F6.B6.A2.22.8B.53.2B.3B.6E",
+            "cmd: 0x41, param: 0x00, args: [120,0,0]",
+            "id: 0xD2135C22, index: 2, tx: 142, seed: 0x2B53",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 7200.0}",
+        ),
+        # Light Brightness Half / Full Toggle
+        (
+            "lampsmart_pro_v1/r1",
+            "1E.FF.62.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.5C.3D.95.F7.DB.CB.B9.BC.48.9A.AB.EC.29.4B.60.57",
+            "cmd: 0x21, param: 0x02, args: [255,255,0]",
+            "id: 0x0001B0E1, index: 0, tx: 65, seed: 0xFA9D",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 1.0}",
+        ),
+        (
+            "lampsmart_pro_v1/r1",
+            "1E.FF.62.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.5C.3D.95.F6.DA.CB.39.7C.DD.0F.AB.79.5C.D2.60.57",
+            "cmd: 0x21, param: 0x01, args: [127,127,0]",
+            "id: 0x0001B0E1, index: 0, tx: 64, seed: 0xFA34",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 0.5, 'warm': 0.5}",
+        ),
+        # Remote BR+
+        (
+            "remote_v1",
+            "1E.FF.56.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.5C.50.9A.08.24.0A.AB.D4.E7.35.AC.43.D3.F4.60.57",
+            "cmd: 0x21, param: 0x14, args: [0,0,0]",
+            "id: 0x00014057, index: 0, tx: 9, seed: 0x1A68",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B+', 'step': 0.1}",
+        ),
+        (
+            "remote_v3",
+            "02.01.02.1B.16.F0.08.10.00.64.91.72.52.33.F1.42.82.5B.F4.46.D9.50.51.C3.9B.CF.64.43.B7.A9.A6",
+            "cmd: 0x21, param: 0x00, args: [20,0,0]",
+            "id: 0x02227574, index: 0, tx: 10, seed: 0xB743",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B+', 'step': 0.1}",
+        ),
+        # Remote BR-
+        (
+            "remote_v1",
+            "1E.FF.56.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.5C.50.9A.08.24.0A.0B.E8.C7.15.F0.63.65.AF.60.57",
+            "cmd: 0x21, param: 0x28, args: [0,0,0]",
+            "id: 0x00014057, index: 0, tx: 12, seed: 0x206C",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B-', 'step': 0.1}",
+        ),
+        (
+            "remote_v3",
+            "02.01.02.1B.16.F0.08.10.00.51.CC.02.4C.52.E6.A1.88.42.58.81.10.78.44.C4.B1.F2.A0.B5.69.ED.B5",
+            "cmd: 0x21, param: 0x00, args: [40,0,0]",
+            "id: 0x02227574, index: 0, tx: 12, seed: 0x69B5",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B-', 'step': 0.1}",
+        ),
+        # Remote Cycle Color: WARM
+        (
+            "remote_v3",
+            "02.01.02.1B.16.F0.08.10.00.84.55.BB.FF.9B.1A.E4.2D.0B.3B.D9.3D.9D.06.77.15.08.19.1E.1B.FD.03",
+            "cmd: 0x21, param: 0x00, args: [64,0,255]",
+            "id: 0x02227574, index: 0, tx: 127, seed: 0x1B1E",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 0.0, 'warm': 1.0}",
+        ),
+        (
+            "remote_v1",
+            "1E.FF.56.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.5C.50.9A.08.DB.0A.C5.FE.65.B7.67.C1.1F.FD.60.57",
+            "cmd: 0x21, param: 0x40, args: [0,255,0]",
+            "id: 0x00014057, index: 0, tx: 127, seed: 0xC929",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 0.0, 'warm': 1.0}",
+        ),
+        # Remote Cycle Color: NATURAL
+        (
+            "remote_v3",
+            "02.01.02.1B.16.F0.08.10.00.0C.49.56.CF.AA.39.0C.25.EB.5F.B9.7B.71.A0.15.07.1F.3B.CC.7C.F4.B6",
+            "cmd: 0x21, param: 0x00, args: [64,255,255]",
+            "id: 0x02227574, index: 0, tx: 128, seed: 0x7CCC",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 1.0}",
+        ),
+        (
+            "remote_v1",
+            "1E.FF.56.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.5C.50.9A.F7.DB.0A.3A.FE.0A.D8.13.AE.7B.8B.60.57",
+            "cmd: 0x21, param: 0x40, args: [255,255,0]",
+            "id: 0x00014057, index: 0, tx: 128, seed: 0xE7DF",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 1.0}",
+        ),
+        # Remote Cycle Color: COLD
+        (
+            "remote_v3",
+            "02.01.02.1B.16.F0.08.10.00.8E.95.81.42.F0.BB.82.17.05.2D.C4.FF.47.69.D6.66.BA.EB.33.1F.87.E4",
+            "cmd: 0x21, param: 0x00, args: [64,255,0]",
+            "id: 0x02227574, index: 0, tx: 129, seed: 0x1F33",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 0.0}",
+        ),
+        (
+            "remote_v1",
+            "1E.FF.56.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.5C.50.9A.F7.24.0A.BA.FE.95.47.16.31.8F.8E.60.57",
+            "cmd: 0x21, param: 0x40, args: [255,0,0]",
+            "id: 0x00014057, index: 0, tx: 129, seed: 0x4726",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 0.0}",
+        ),
+        # Remote Night Mode
+        (
+            "remote_v3",
+            "02.01.02.1B.16.F0.08.10.00.FE.1B.AA.BB.59.3A.64.88.1F.FB.1A.50.3E.8B.9B.AF.71.61.AD.A4.52.3A",
+            "cmd: 0x23, param: 0x00, args: [0,0,0]",
+            "id: 0x02227574, index: 0, tx: 44, seed: 0xA4AD",
+            "light_0: ['on', 'cold', 'warm'] / {'sub_type': 'cww', 'on': True, 'cold': 0.1, 'warm': 0.1}",
+        ),
+        (
+            "remote_v1",
+            "1E.FF.56.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.1C.50.9A.08.24.0A.0F.FC.B1.63.03.15.6D.9D.60.57",
+            "cmd: 0x23, param: 0x00, args: [0,0,0]",
+            "id: 0x00014057, index: 0, tx: 44, seed: 0xEF02",
+            "light_0: ['on', 'cold', 'warm'] / {'sub_type': 'cww', 'on': True, 'cold': 0.1, 'warm': 0.1}",
+        ),
+        # Remote K-
+        (
+            "remote_v3",
+            "02.01.02.1B.16.F0.08.10.00.4E.00.41.82.1D.99.50.D6.C5.ED.04.3F.DF.56.16.BB.55.2B.F3.19.EF.66",
+            "cmd: 0x21, param: 0x00, args: [24,0,0]",
+            "id: 0x03309759, index: 0, tx: 212, seed: 0x19F3",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K-', 'step': 0.1}",
+        ),
+        (
+            "remote_v1",
+            "1E.FF.56.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.5C.14.91.08.24.0A.10.E4.CA.18.22.6E.E3.A3.60.57",
+            "cmd: 0x21, param: 0x18, args: [0,0,0]",
+            "id: 0x00019075, index: 0, tx: 212, seed: 0x6BDC",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K-', 'step': 0.1}",
+        ),
+        # Remote K+
+        (
+            "remote_v3",
+            "02.01.02.1B.16.F0.08.10.00.11.58.42.0C.3F.44.F3.C9.02.18.C1.50.34.04.84.E7.37.E0.F5.4F.4D.78",
+            "cmd: 0x21, param: 0x00, args: [36,0,0]",
+            "id: 0x03309759, index: 0, tx: 216, seed: 0x4FF5",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K+', 'step': 0.1}",
+        ),
+        (
+            "remote_v1",
+            "1E.FF.56.55.18.87.52.B6.5F.2B.5E.00.FC.31.51.5C.14.91.08.24.0A.20.D8.80.52.0A.24.BB.83.60.57",
+            "cmd: 0x21, param: 0x24, args: [0,0,0]",
+            "id: 0x00019075, index: 0, tx: 216, seed: 0x7F8E",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K+', 'step': 0.1}",
+        ),
+    ],
+)
+class TestEncoderFanlampNoReverse(_TestEncoderFull):
+    """Fanlamp Encoder / Decoder No Reverse tests."""
+
+    _with_reverse = False
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFull.PARAM_NAMES,
+    [
+        # ALL OFF
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC31512E7E990824CBBBFC7067F455E84F072A",
+            "cmd: 0x6F, param: 0x00, args: [0,0,0,1,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "device_0: ['on'] / {'on': False}",
+        ),
+        # TIMER 1H
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC31515A7E993424CBBBFC7067F455E84F8998",
+            "cmd: 0x41, param: 0x00, args: [60,0,0,1,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 3600.0}",
+        ),
+        # TIMER 2H
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC31515A7E991624CBBBFC7067F455E84F21D1",
+            "cmd: 0x41, param: 0x00, args: [120,0,0,1,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 7200.0}",
+        ),
+        # TIMER 4H
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC31515A7E990724CBBBFC7067F455E84FF5F5",
+            "cmd: 0x41, param: 0x00, args: [240,0,0,1,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "device_0: ['cmd'] / {'cmd': 'timer', 's': 14400.0}",
+        ),
+        # Light ON
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC3151D07E990824CB3BFC31A3F455E8CFA752",
+            "cmd: 0x10, param: 0x00, args: [0,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "light_0: ['on'] / {'on': True}",
+        ),
+        # Light OFF
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC3151507E990824CB3BFC31A3F455E8CF79D4",
+            "cmd: 0x11, param: 0x00, args: [0,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "light_0: ['on'] / {'on': False}",
+        ),
+        # FAN SPEED 1
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC3151947E998824CB3BFC31A3F45528CFC0BA",
+            "cmd: 0x32, param: 0x00, args: [1,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 1.0}",
+        ),
+        # FAN SPEED 2
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC3151947E994824CB3BFCD1A3F455A8CF01EB",
+            "cmd: 0x32, param: 0x00, args: [2,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 2.0}",
+        ),
+        # FAN SPEED 3
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC3151947E99C824CB3BFCF1A3F45548CFE315",
+            "cmd: 0x32, param: 0x00, args: [3,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 3.0}",
+        ),
+        # FAN SPEED 4
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC3151947E992824CB3BFCD1A3F45548CF172D",
+            "cmd: 0x32, param: 0x00, args: [4,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 4.0}",
+        ),
+        # FAN SPEED 5
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC3151947E99A824CB3BFCB1A3F455A8CF24D1",
+            "cmd: 0x32, param: 0x00, args: [5,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 5.0}",
+        ),
+        # FAN SPEED 6
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC3151947E996824CB3BFC31A3F45548CF0162",
+            "cmd: 0x32, param: 0x00, args: [6,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "fan_0: ['on', 'speed'] / {'speed_count': 6, 'on': True, 'speed': 6.0}",
+        ),
+        # FAN OFF
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC3151547E990824CB3BFC71A3F455B4CB6219",
+            "cmd: 0x31, param: 0x00, args: [0,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "fan_0: ['on'] / {'on': False}",
+        ),
+        # FAN DIR TOGGLE and ON
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC31513A7E990824CB3BFC51A3F45568CF632B",
+            "cmd: 0x47, param: 0x00, args: [0,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "fan_0: ['on', 'dir'] / {'on': True, 'dir': 'toggle'}",
+        ),
+        # FAN BREEZE
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC3151147E994824CB3BFC51A3F45528CFB1E4",
+            "cmd: 0x33, param: 0x00, args: [2,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "fan_0: ['on', 'preset'] / {'on': True, 'preset': 'breeze'}",
+        ),
+        # BR-
+        (
+            "fanlamp_pro_v1/r1",
+            "0201001BFFF0FFB65F2B5E00FC3151782B990824CA7BFC71A3F45568CFA919",
+            "cmd: 0x05, param: 0x00, args: [0,0,128,2,0]",
+            "id: 0x00008089, index: 0, tx: 0, seed: 0x0000",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B-', 'step': 0.08}",
+        ),
+        # BR+
+        (
+            "fanlamp_pro_v1/r1",
+            "0201001BFFF0FFB65F2B5E00FC3151F82B990824CA7BFC71A3F45568CFA919",
+            "cmd: 0x04, param: 0x00, args: [0,0,128,2,0]",
+            "id: 0x00008089, index: 0, tx: 0, seed: 0x0000",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'B+', 'step': 0.08}",
+        ),
+        # K+
+        (
+            "fanlamp_pro_v1/r1",
+            "0201001BFFF0FFB65F2B5E00FC3151B82B990824CA7BFC71A3F45568CFA919",
+            "cmd: 0x06, param: 0x00, args: [0,0,128,2,0]",
+            "id: 0x00008089, index: 0, tx: 0, seed: 0x0000",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K+', 'step': 0.08}",
+        ),
+        # K-
+        (
+            "fanlamp_pro_v1/r1",
+            "0201001BFFF0FFB65F2B5E00FC3151382B990824CAFBFC71A3F45568CFA919",
+            "cmd: 0x07, param: 0x00, args: [0,0,128,3,0]",
+            "id: 0x00008089, index: 0, tx: 0, seed: 0x0000",
+            "light_0: ['cmd'] / {'sub_type': 'cww', 'cmd': 'K-', 'step': 0.12}",
+        ),
+        # TEMP 3000K FULL WARM
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC31515C7E9908DBCB3BFCD1A3F45568CFCAE6",
+            "cmd: 0x21, param: 0x00, args: [0,255,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 0.0, 'warm': 1.0}",
+        ),
+        # TEMP 4000K (Medium)
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC31515C7E99F7DBCB3BFCD1A3F45568CF5736",
+            "cmd: 0x21, param: 0x00, args: [255,255,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 1.0}",
+        ),
+        # TEMP 6000K FULL COLD
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC31515C7E99F724CB3BFCD1A3F45568CFE116",
+            "cmd: 0x21, param: 0x00, args: [255,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "light_0: ['cold', 'warm'] / {'sub_type': 'cww', 'cold': 1.0, 'warm': 0.0}",
+        ),
+        # NIGHT MODE
+        (
+            "fanlamp_pro_v1/r0",
+            "0201191BFFF0FFB65F2B5E00FC31511C7E990824CB3BFCB1A3F45568CFA202",
+            "cmd: 0x23, param: 0x00, args: [0,0,0]",
+            "id: 0x00008023, index: 0, tx: 0, seed: 0x0000",
+            "light_0: ['on', 'cold', 'warm'] / {'sub_type': 'cww', 'on': True, 'cold': 0.1, 'warm': 0.1}",
+        ),
+        # Beep Toggle (not implemented / "cmd: 0x48, param: 0x00, args: [0,0,0]")
+        # 02.01.19.1B.FF.F0.FF.B6.5F.2B.5E.00.FC.31.51.CA.7E.99.08.24.CB.7B.FC.70.67.F4.55.28.CF.01.59
+        # 02.01.19.1B.FF.F0.FF.B6.5F.2B.5E.00.FC.31.51.CA.7E.99.08.24.CB.FB.FC.70.67.F4.55.A8.CF.2F.1E
+    ],
+)
+class TestEncoderFanlampRemoteV0(_TestEncoderFull):
+    """Fanlamp Encoder / Decoder No Reverse tests."""
+
+    _with_reverse = False
+
+
+@pytest.mark.parametrize(
+    _TestEncoderFullAll.PARAM_NAMES,
+    [
+        # Night Mode as effect
+        (
+            "lampsmart_pro_v2",
+            [True, [0x30, 0x82, 0x00]],
+            "nm_as_effect",
+            "0201021B03F0083082367AFD5A553140281A76770F9180FFFCBDC6532BA5A9",
+            "cmd: 0x23, param: 0x00, args: [0,0,0]",
+            "id: 0x712950E6, index: 0, tx: 83, seed: 0x2B53",
+            "light_0: ['effect'] / {'effect': 'nm'}",
+        ),
+        # Night Mode as second light
+        (
+            "lampsmart_pro_v2",
+            [True, [0x30, 0x82, 0x00]],
+            "nm_as_second_light",
+            "0201021B03F0083082367AFD5A553140281A76770F9180FFFCBDC6532BA5A9",
+            "cmd: 0x23, param: 0x00, args: [0,0,0]",
+            "id: 0x712950E6, index: 0, tx: 83, seed: 0x2B53",
+            "light_1: ['on'] / {'on': 'toggle'}",
+        ),
+    ],
+)
+class TestEncoderFanlampSets(_TestEncoderFullAll):
+    """Fanlamp Encoder / Decoder Full ALL tests."""
+
+
+def _get_cmd(codec: BleAdvCodec, buffer: str) -> BleAdvEncCmd:
+    (enc_cmd, _) = codec.decode_adv(BleAdvAdvertisement(0xFF, bytes.fromhex(buffer.replace(".", ""))))
+    assert enc_cmd is not None
+    return enc_cmd
+
+
+def test_consolidate_std() -> None:
+    """Test consolidate for standard button."""
+    codec = CODECS["fanlamp_pro_v1/r0"]
+    enc_cmd1 = _get_cmd(codec, "F0.FF.B6.5F.2B.5E.00.FC.31.51.D0.7E.99.08.24.CB.3B.FC.31.A3.F4.55.E8.CF.A7.52")
+    assert enc_cmd1.cmd == 0x10
+    assert enc_cmd1.arg2 == 0x00
+    assert enc_cmd1.arg3 == 0x00
+    assert codec.consolidate(copy(enc_cmd1), enc_cmd1) is not None
+    enc_cmd2 = _get_cmd(codec, "F0.FF.B6.5F.2B.5E.00.FC.31.51.D0.7E.99.08.24.CB.BB.FC.70.67.F4.55.E8.4F.D0.7D")
+    assert enc_cmd2.cmd == 0x10
+    assert enc_cmd2.arg2 == 0x00
+    assert enc_cmd2.arg3 == 0x01
+    assert codec.consolidate(copy(enc_cmd2), enc_cmd1) is None
+    enc_cmd3 = _get_cmd(codec, "F0.FF.B6.5F.2B.5E.00.FC.31.51.D0.7E.99.08.24.CB.7B.FC.70.67.F4.55.28.CF.61.9D")
+    assert enc_cmd3.cmd == 0x10
+    assert enc_cmd3.arg2 == 0x00
+    assert enc_cmd3.arg3 == 0x02
+    assert codec.consolidate(copy(enc_cmd3), enc_cmd2) is None
+    enc_cmd4 = _get_cmd(codec, "F0.FF.B6.5F.2B.5E.00.FC.31.51.D0.7E.99.08.24.CB.FB.FC.70.67.F4.55.A8.CF.4F.DA")
+    assert enc_cmd4.cmd == 0x10
+    assert enc_cmd4.arg2 == 0x00
+    assert enc_cmd4.arg3 == 0x03
+    assert codec.consolidate(copy(enc_cmd4), enc_cmd3) is None
+
+
+def test_consolidate_plus() -> None:
+    """Test consolidate for B+ button."""
+    codec = CODECS["fanlamp_pro_v1/r1"]
+    enc_cmd1 = _get_cmd(codec, "F0FFB65F2B5E00FC3151782B990824CABBFC71A3F45568CFA919")
+    assert enc_cmd1.cmd == 0x05
+    assert enc_cmd1.arg2 == 0x80
+    assert enc_cmd1.arg3 == 0x01
+    assert codec.consolidate(copy(enc_cmd1), None) is not None
+    assert codec.consolidate(copy(enc_cmd1), enc_cmd1) is None
+    enc_cmd2 = _get_cmd(codec, "F0FFB65F2B5E00FC3151782B990824CA7BFC71A3F45568CFA919")
+    assert enc_cmd2.cmd == 0x05
+    assert enc_cmd2.arg2 == 0x80
+    assert enc_cmd2.arg3 == 0x02
+    cons_cmd = codec.consolidate(copy(enc_cmd2), enc_cmd1)
+    assert cons_cmd is not None
+    assert cons_cmd.arg3 == 0x01
+    enc_cmd3 = _get_cmd(codec, "F0FFB65F2B5E00FC3151782B990824CAFBFC71A3F45568CFA919")
+    assert enc_cmd3.cmd == 0x05
+    assert enc_cmd3.arg2 == 0x80
+    assert enc_cmd3.arg3 == 0x03
+    cons_cmd = codec.consolidate(copy(enc_cmd3), enc_cmd2)
+    assert cons_cmd is not None
+    assert cons_cmd.arg3 == 0x01
+    enc_cmd4 = _get_cmd(codec, "F0FFB65F2B5E00FC3151782B9908244AFBFC71A3F45568CFA919")
+    assert enc_cmd4.cmd == 0x05
+    assert enc_cmd4.arg2 == 0x81
+    assert enc_cmd4.arg3 == 0x03
+    assert codec.consolidate(copy(enc_cmd4), enc_cmd3) is None
+    assert codec.consolidate(copy(enc_cmd1), enc_cmd4) is not None

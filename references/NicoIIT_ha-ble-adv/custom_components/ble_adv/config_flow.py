@@ -1,0 +1,977 @@
+"""Config Flow for BLE ADV."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import traceback
+from abc import abstractmethod
+from collections.abc import Awaitable, Callable, Coroutine
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from http import HTTPStatus
+from random import randint
+from typing import Any, cast
+
+import voluptuous as vol
+from aiohttp import web
+from homeassistant.config_entries import SOURCE_RECONFIGURE, ConfigFlow, ConfigFlowResult
+from homeassistant.const import CONF_DEVICE, CONF_NAME, CONF_TYPE
+from homeassistant.data_entry_flow import section
+from homeassistant.helpers import selector
+from homeassistant.helpers.http import HomeAssistantView
+from homeassistant.helpers.json import ExtendedJSONEncoder
+from homeassistant.helpers.network import get_url
+
+from . import get_coordinator
+from .codecs import DYN_CODEC_PARAM_MAP, PHONE_APPS, codec_from_dyn
+from .codecs.const import (
+    ATTR_CMD,
+    ATTR_CMD_PAIR,
+    ATTR_DIR,
+    ATTR_EFFECT,
+    ATTR_OSC,
+    ATTR_PRESET,
+    ATTR_SPEED_COUNT,
+    ATTR_SUB_TYPE,
+    DEVICE_TYPE,
+    FAN_TYPE,
+    LIGHT_TYPE,
+    LIGHT_TYPE_CWW,
+    LIGHT_TYPE_RGB,
+)
+from .codecs.models import BleAdvCodec, BleAdvConfig, BleAdvEntAttr
+from .const import (
+    CONF_ADAPTER_ID,
+    CONF_ADAPTER_IDS,
+    CONF_CODEC_ID,
+    CONF_CODEC_ID_OLD,
+    CONF_DEVICE_QUEUE,
+    CONF_DURATION,
+    CONF_EFFECTS,
+    CONF_FANS,
+    CONF_FORCED_CMDS,
+    CONF_FORCED_ID,
+    CONF_FORCED_OFF,
+    CONF_FORCED_ON,
+    CONF_INDEX,
+    CONF_INTERVAL,
+    CONF_LAST_VERSION,
+    CONF_LIGHTS,
+    CONF_MAX_ENTITY_NB,
+    CONF_MIN_BRIGHTNESS,
+    CONF_PAIRED,
+    CONF_PARAMS,
+    CONF_PHONE_APP,
+    CONF_PRESETS,
+    CONF_RAW,
+    CONF_REFRESH_DIR_ON_START,
+    CONF_REFRESH_ON_START,
+    CONF_REFRESH_OSC_ON_START,
+    CONF_REMOTE,
+    CONF_REMOTES,
+    CONF_REPEAT,
+    CONF_REPEATS,
+    CONF_REVERSED,
+    CONF_TECHNICAL,
+    CONF_TRANS_SET,
+    CONF_TYPE_NONE,
+    CONF_USE_DIR,
+    CONF_USE_OSC,
+    DOMAIN,
+)
+from .coordinator import BleAdvCoordinator
+from .device import BleAdvDevice
+from .fan import FAN_BASE_FEATURES, BleAdvFan
+from .light import BleAdvLightCWW
+
+_LOGGER = logging.getLogger(__name__)
+
+WAIT_MAX_SECONDS = 10
+
+
+class _CodecConfig(BleAdvConfig):
+    def __init__(self, codec_id: str, config_id: int, index: int, params: list[Any] | None = None) -> None:
+        """Init with codec, adapter, id and index."""
+        super().__init__(config_id, index, params)
+        self.codec_id: str = codec_id
+        self.codec_name: str = codec_from_dyn(self.codec_id, self.codec_params)
+
+    def __repr__(self) -> str:
+        return f"{self.codec_name} - 0x{self.id:X} - {self.index:d}"
+
+    def __eq__(self, comp: _CodecConfig) -> bool:
+        return (self.codec_id == comp.codec_id) and (self.id == comp.id) and (self.index == comp.index) and (self.codec_params == comp.codec_params)
+
+    def __hash__(self) -> int:
+        return hash((self.codec_id, self.id, self.index, *self.codec_params))
+
+
+type WebResponseCallback = Callable[[], Awaitable[web.Response]]
+
+
+class BleAdvConfigView(HomeAssistantView):
+    """Config Flow related api view."""
+
+    url: str = f"/api/{DOMAIN}/config_flow/{{flow_id}}"
+    name: str = f"api:{DOMAIN}:config_flow"
+    requires_auth: bool = False
+    NOT_FOUND_RESP: web.Response = web.Response(status=HTTPStatus.NOT_FOUND)
+
+    def __init__(self, flow_id: str, response: WebResponseCallback) -> None:
+        self._flow_id: str = flow_id
+        self._response = response
+        self._called_once = False
+
+    @property
+    def full_url(self) -> str:
+        """Get the full url."""
+        return self.url.format(flow_id=self._flow_id)
+
+    async def get(self, _: web.Request, flow_id: str) -> web.Response:
+        """Process call."""
+        # Security as there is no auth: the flow_id must match the flow.flow_id
+        # We ensure the view cannot be called more than once
+        # as it is not possible to unregister the view
+        if self._called_once or self._flow_id != flow_id:
+            _LOGGER.error(f"Invalid flow_id given: {flow_id}")
+            return self.NOT_FOUND_RESP
+        self._called_once = True
+        return await self._response()
+
+
+@dataclass
+class _ActionResult:
+    name: str | None = None
+    ph: dict[str, str] | None = None
+
+
+class BleAdvProgressFlowBase:
+    """Base Progress Flow."""
+
+    def __init__(self, flow: BleAdvConfigFlow, step_id: str, ph: dict[str, str] | None = None) -> None:
+        self._flow: BleAdvConfigFlow = flow
+        self._step_id: str = step_id
+        self._task: asyncio.Task | None = None
+        self._result: _ActionResult = _ActionResult(name=self._step_id, ph=ph)
+        self._exit = False
+
+    @abstractmethod
+    async def _process_action(self) -> None:
+        """Process Action."""
+
+    def next(self) -> ConfigFlowResult | None:
+        """Execute next step of the Progress Flow."""
+        if self._exit:
+            return None
+        if self._task is None or self._task.done():
+            self._task = self._flow.hass.async_create_task(self._process_action())
+        return self._flow.async_show_progress(
+            step_id=self._step_id,
+            progress_action=self._result.name if self._result.name is not None else self._step_id,
+            progress_task=self._task,
+            description_placeholders=self._result.ph,
+        )
+
+
+type ProgressFlowAction = Callable[[], Coroutine[Any, Any, None]]
+
+
+class BleAdvProgressFlow(BleAdvProgressFlowBase):
+    """Progress Flow."""
+
+    def __init__(self, flow: BleAdvConfigFlow, step_id: str, action: ProgressFlowAction, ph: dict[str, str] | None = None) -> None:
+        super().__init__(flow, step_id, ph)
+        self._action: ProgressFlowAction | None = action
+
+    async def _process_action(self) -> None:
+        """Call simple Action if not done already, else exits ater 0.1s ."""
+        if self._action is not None:
+            try:
+                await self._action()
+            except Exception:
+                self._flow.add_diag(f"Exception running Action: {traceback.format_exc()}")
+            self._action = None
+        else:
+            await asyncio.sleep(0.1)
+            self._exit = True
+
+
+class BleAdvWaitProgress(BleAdvProgressFlowBase):
+    """Base Progress Flow based on wait / update."""
+
+    def __init__(self, flow: BleAdvConfigFlow, step_id: str, max_duration: float) -> None:
+        super().__init__(flow, step_id, {})
+        self._stop_time: datetime = datetime.now() + timedelta(seconds=max_duration)
+        self._max_duration: float = max_duration
+
+    @abstractmethod
+    def _evaluate(self) -> _ActionResult:
+        """Evaluate the updated name / placeholders. Called every 0.1s to compute the updated _ActionResult."""
+
+    def _update_action_result(self, result: _ActionResult) -> bool:
+        updated = False
+        if result.name is not None and self._result.name != result.name:
+            self._result.name = result.name
+            updated = True
+        if result.ph is not None and self._result.ph != result.ph:
+            self._result.ph = result.ph
+            updated = True
+        return updated
+
+    async def _process_action(self) -> None:
+        """Process Evaluation every 0.1s. Return if name / placeholders changed."""
+        try:
+            while datetime.now() < self._stop_time:
+                if self._update_action_result(self._evaluate()):
+                    return
+                await asyncio.sleep(0.1)
+        except Exception as err:
+            self._flow.add_diag(f"Exception running Action: {err}")
+        self._exit = True
+
+
+class BleAdvWaitConfigProgress(BleAdvWaitProgress):
+    """Listen to configurations."""
+
+    def __init__(self, flow: BleAdvConfigFlow, step_id: str, max_duration: float, wait_agg: float = 0, with_match: bool = False) -> None:
+        super().__init__(flow, step_id, max_duration)
+        self._wait_agg: float = wait_agg
+        self._with_match: bool = with_match
+        self._agg_mode: bool = False
+        self.configs: dict[str, list[_CodecConfig]] = {}
+        self._flow.coordinator.start_listening(max_duration + wait_agg)
+
+    def _add_config(self, adapter_id: str, conf: _CodecConfig) -> None:
+        confs = self.configs.setdefault(adapter_id, [])
+        if conf not in confs:
+            confs.append(conf)
+
+    def _evaluate(self) -> _ActionResult:
+        coord = self._flow.coordinator
+        for adapter_id, codec_id, match_id, match_params, config in coord.listened_decoded_confs:
+            if self._with_match:
+                self._add_config(adapter_id, _CodecConfig(match_id, config.id, config.index, match_params))
+            self._add_config(adapter_id, _CodecConfig(codec_id, config.id, config.index, config.codec_params))
+        coord.listened_decoded_confs.clear()
+
+        if not self.configs:
+            return _ActionResult(ph={"max_seconds": str(self._max_duration)})
+        if not self._agg_mode:
+            self._agg_mode = True
+            self._stop_time = datetime.now() + timedelta(seconds=self._wait_agg)
+        return _ActionResult(name="agg_config", ph={})
+
+
+def _format_advs(coord: BleAdvCoordinator, raw_advs: list[bytes]) -> str:
+    dec_advs: list[str] = []
+    for raw_adv in raw_advs:
+        decoded = coord.decode_raw(raw_adv.hex())
+        if len(decoded) > 1:
+            dec_advs.append('\n    ("' + '","'.join(decoded) + '")')
+        else:
+            dec_advs.append("\n    " + raw_adv.hex().upper())
+    return "".join(dec_advs) if dec_advs else "\n    None"
+
+
+class BleAdvWaitRawAdvProgress(BleAdvWaitProgress):
+    """Listen to raw ADVs."""
+
+    def __init__(self, flow: BleAdvConfigFlow, step_id: str, max_duration: float) -> None:
+        super().__init__(flow, step_id, max_duration)
+        self.raw_advs: list[bytes] = []
+        self._flow.coordinator.start_listening(max_duration)
+
+    def _evaluate(self) -> _ActionResult:
+        coord = self._flow.coordinator
+        for raw_adv in coord.listened_raw_advs:
+            if raw_adv not in self.raw_advs:
+                self.raw_advs.append(raw_adv)
+        coord.listened_raw_advs.clear()
+        return _ActionResult(ph={"advs": _format_advs(coord, self.raw_advs)})
+
+
+class BleAdvConfigHandler:
+    """Handle configs."""
+
+    def __init__(self, configs: dict[str, list[_CodecConfig]] | None = None) -> None:
+        self._configs: dict[str, list[_CodecConfig]] = {} if configs is None else configs
+        self._selected_adapter_id: str | None = None
+        self._selected_config: int = 0
+
+    def __repr__(self) -> str:
+        return repr(self._configs)
+
+    def reset_selected(self) -> None:
+        """Clear selection."""
+        self._selected_config = 0
+        self._selected_adapter_id = None
+
+    @property
+    def adapters(self) -> list[str]:
+        """Return the list of adapter_id."""
+        return list(self._configs.keys())
+
+    def selected_adapter(self) -> str:
+        """Return the selected adapter if any, else the first one. Can only be called if 'has_confs' is True."""
+        if self._selected_adapter_id in self._configs:
+            return self._selected_adapter_id
+        return self.adapters[0]
+
+    def is_empty(self) -> bool:
+        """Return True if no conf."""
+        return not bool(self._configs)
+
+    def has_next(self) -> bool:
+        """Return True if there are still conf in selected."""
+        return (self._selected_config + 1) < len(self.selected_confs())
+
+    def next(self) -> _CodecConfig:
+        """Return the next conf if any."""
+        self._selected_config += 1
+        return self.selected_confs()[self._selected_config]
+
+    def set_selected_adapter(self, adapter_id: str) -> None:
+        """Set adapter as selected."""
+        self._selected_adapter_id = adapter_id
+        self._selected_config = 0
+
+    def selected_confs(self) -> list[_CodecConfig]:
+        """Return the confs filtered by selected_adapter_id."""
+        return self._configs[self.selected_adapter()]
+
+    def selected(self) -> _CodecConfig:
+        """Return the selected conf."""
+        return self.selected_confs()[self._selected_config]
+
+    def placeholders(self) -> dict[str, str]:
+        """Return the Placeholders for the selected conf."""
+        conf = self.selected()
+        nb: str = str(self._selected_config + 1)
+        tot: str = str(len(self.selected_confs()))
+        return {"nb": nb, "tot": tot, "codec": conf.codec_name, "id": f"0x{conf.id:X}", "index": str(conf.index)}
+
+
+class BleAdvConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for BLE ADV."""
+
+    VERSION = CONF_LAST_VERSION
+    WAIT_TEST_LIGHT: float = 1.0
+    WAIT_TEST_FAN: float = 3.0
+
+    def __init__(self) -> None:
+        """Initialize the config flow."""
+        self._confs: BleAdvConfigHandler = BleAdvConfigHandler()
+        self._remote_index: int = 0
+        self._progress: BleAdvProgressFlowBase | None = None
+        self._test_with_fan = False
+
+        self._data: dict[str, Any] = {}
+        self._finalize_requested: bool = False
+        self._last_inject: dict[str, Any] = {}
+
+        self._diags: list[str] = []
+        self._return_step_after_diag: str = ""
+
+    def add_diag(self, msg: str, log_level: int = logging.DEBUG) -> None:
+        """Log a message and add it to diagnostics."""
+        _LOGGER.log(log_level, msg)
+        self._diags.append(f"{datetime.now()} - {msg}")
+
+    async def _diagnostic_dump(self) -> dict[str, Any]:
+        """Diagnostic dump."""
+        return {**await self.coordinator.full_diagnostic_dump(), "flow": self._diags}
+
+    def _remote_conf_placeholders(self) -> dict[str, str]:
+        conf = self._data[CONF_REMOTES][self._remote_index]
+        codec_name = codec_from_dyn(conf[CONF_CODEC_ID], conf.get(CONF_PARAMS, []))
+        return {"name": conf[CONF_NAME], "codec": codec_name, "id": f"0x{conf[CONF_FORCED_ID]:X}", "index": str(conf[CONF_INDEX])}
+
+    def _get_device(self, name: str, adapter_id: str, config: _CodecConfig, duration: int | None = None) -> BleAdvDevice:
+        codec: BleAdvCodec = self.coordinator.codecs[config.codec_id]
+        duration = duration if duration is not None else codec.duration
+        return BleAdvDevice(
+            self.hass, self.flow_id, name, config.codec_id, [adapter_id], codec.repeat, codec.interval, duration, config, self.coordinator
+        )
+
+    async def async_test_light(self) -> None:
+        """Blink Light."""
+        self.add_diag(f"Start blink - {self._confs.selected_adapter()} / {self._confs.selected()}.")
+        tmp_device: BleAdvDevice = self._get_device("cf", self._confs.selected_adapter(), self._confs.selected())
+        light = BleAdvLightCWW(LIGHT_TYPE_CWW, tmp_device, 0, 0.1)
+        light.init_with_default()
+        self.async_update_progress(0.01)
+        await light.async_turn_on()
+        await asyncio.sleep(self.WAIT_TEST_LIGHT)
+        self.async_update_progress(0.25)
+        await light.async_turn_off()
+        await asyncio.sleep(self.WAIT_TEST_LIGHT)
+        self.async_update_progress(0.50)
+        await light.async_turn_on()
+        await asyncio.sleep(self.WAIT_TEST_LIGHT)
+        self.async_update_progress(0.75)
+        await light.async_turn_off()
+        await asyncio.sleep(self.WAIT_TEST_LIGHT)
+        self.async_update_progress(1)
+        self.add_diag("Stop blink.")
+
+    async def async_test_fan(self) -> None:
+        """Blink Fan."""
+        fan_feats = self.coordinator.codecs[self._confs.selected().codec_id].get_supported_features(FAN_TYPE, BleAdvCodec.DEF_TRANS_NAME)
+        if not fan_feats or (fan_speed_counts := fan_feats[0].get(ATTR_SPEED_COUNT)) is None:
+            self.add_diag(f"FAN not supported by the codec {self._confs.selected()}, skipping test.")
+            return
+        fan_max_speed_count = max(fan_speed_counts)
+        self.add_diag(f"Start FAN {fan_max_speed_count} - {self._confs.selected_adapter()} / {self._confs.selected()}.")
+        tmp_device: BleAdvDevice = self._get_device("cf", self._confs.selected_adapter(), self._confs.selected())
+        fan = BleAdvFan(tmp_device, 0, fan_max_speed_count, FAN_BASE_FEATURES, [])
+        fan.init_with_default()
+        self.async_update_progress(0.01)
+        await fan.async_set_percentage(100)
+        await asyncio.sleep(self.WAIT_TEST_FAN)
+        self.async_update_progress(0.50)
+        await fan.async_set_percentage(0)
+        await asyncio.sleep(self.WAIT_TEST_FAN)
+        self.async_update_progress(1)
+        self.add_diag("Stop FAN.")
+
+    async def async_pair_all(self) -> None:
+        """Pair."""
+        self.add_diag(f"Start pair - {self._confs.selected_adapter()} / {self._confs.selected_confs()}.")
+        pair_cmd = BleAdvEntAttr([ATTR_CMD], {ATTR_CMD: ATTR_CMD_PAIR}, DEVICE_TYPE, 0)
+        adapter_id = self._confs.selected_adapter()
+        for i, config in enumerate(self._confs.selected_confs()):
+            tmp_device: BleAdvDevice = self._get_device(f"cf{i}", adapter_id, config, 300)
+            await tmp_device.advertise(pair_cmd)
+            await asyncio.sleep(0.3)
+        await asyncio.sleep(2)
+        self.add_diag("Stop pair.")
+
+    def _create_api_view(self, response: web.Response) -> str:
+        async def api_resp() -> web.Response:
+            await self.hass.config_entries.flow.async_configure(flow_id=self.flow_id, user_input={})
+            return response
+
+        api_view = BleAdvConfigView(self.flow_id, api_resp)
+        self.hass.http.register_view(api_view)
+        return f"{get_url(self.hass, prefer_external=True)}{api_view.full_url}"
+
+    def _create_api_json_view(self, name: str, data: dict[str, Any]) -> str:
+        return self._create_api_view(
+            web.Response(
+                body=json.dumps(data, indent=2, cls=ExtendedJSONEncoder),
+                content_type="application/json",
+                headers={"Content-Disposition": f'attachment; filename="{name}.json"'},
+            )
+        )
+
+    async def async_step_user(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Handle the user step to setup a device."""
+        self.add_diag("Config flow 'user' started.")
+        self.coordinator: BleAdvCoordinator = await get_coordinator(self.hass)
+        if not self.coordinator.has_available_adapters():
+            return await self.async_step_no_adapters()
+        return self.async_show_menu(step_id="user", menu_options=["wait_config", "pair", "tools"])
+
+    async def async_step_no_adapters(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """No Adapter Step."""
+        ph = {"url": "https://github.com/NicoIIT/ha-ble-adv/wiki/Troubleshooting-Guide#step-12-bluetooth-adapter"}
+        return self.async_show_menu(step_id="no_adapters", menu_options=["abort_no_adapters", "open_issue"], description_placeholders=ph)
+
+    async def async_step_abort_no_adapters(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """No Adapter Abort Step."""
+        return self.async_abort(reason="no_adapters")
+
+    async def async_step_tools(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Tooling Step."""
+        self._return_step_after_diag = "tools"
+        supp_menus = ["manual", "decode_raw", "inject"] if self.coordinator.maintainer_menus else []
+        return self.async_show_menu(step_id="tools", menu_options=["diag", "listen_raw", *supp_menus])
+
+    async def async_step_diag(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Diagnostic step."""
+        if user_input is not None:
+            return self.async_external_step_done(next_step_id=self._return_step_after_diag)
+        return self.async_external_step(step_id="diag", url=self._create_api_json_view("ble_adv_diag", await self._diagnostic_dump()))
+
+    async def async_step_inject(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Manual injection step."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            self._last_inject = user_input
+            if not (errors := await self.coordinator.inject_raw({**user_input, CONF_DURATION: 800, CONF_DEVICE_QUEUE: "man"})):
+                return await self.async_step_inject_res()
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_ADAPTER_ID, default=self._last_inject.get(CONF_ADAPTER_ID, None)): vol.In(self.coordinator.get_adapter_ids()),
+                vol.Required(CONF_RAW, default=self._last_inject.get(CONF_RAW, "")): selector.TextSelector(selector.TextSelectorConfig()),
+                vol.Optional(CONF_INTERVAL, default=self._last_inject.get(CONF_INTERVAL, 20)): selector.NumberSelector(
+                    selector.NumberSelectorConfig(step=10, min=10, max=150, mode=selector.NumberSelectorMode.BOX)
+                ),
+                vol.Optional(CONF_REPEAT, default=self._last_inject.get(CONF_REPEAT, 9)): selector.NumberSelector(
+                    selector.NumberSelectorConfig(step=1, min=1, max=20, mode=selector.NumberSelectorMode.BOX)
+                ),
+            }
+        )
+
+        return self.async_show_form(step_id="inject", data_schema=data_schema, errors=errors)
+
+    async def async_step_inject_res(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Manual injection result step."""
+        return self.async_show_menu(step_id="inject_res", menu_options=["inject", "tools"])
+
+    async def async_step_listen_raw(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Listen to all BLE ADV messages."""
+        if self._progress is None:
+            self._progress = BleAdvWaitRawAdvProgress(self, "listen_raw", WAIT_MAX_SECONDS)
+        if (flow_res := self._progress.next()) is not None:
+            return flow_res
+        self._raw_advs = cast("BleAdvWaitRawAdvProgress", self._progress).raw_advs
+        self._progress = None
+        return self.async_show_progress_done(next_step_id="listen_raw_res")
+
+    async def async_step_listen_raw_res(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Listen to all BLE ADV messages result step."""
+        return self.async_show_menu(
+            step_id="listen_raw_res",
+            menu_options=["listen_raw", "tools"],
+            description_placeholders={"advs": _format_advs(self.coordinator, self._raw_advs)},
+        )
+
+    async def async_step_decode_raw(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Decode Raw BLE ADV messages."""
+        if user_input is not None:
+            self._decode_res = self.coordinator.decode_raw(user_input[CONF_RAW])
+            return await self.async_step_decode_raw_res()
+        data_schema = vol.Schema(
+            {vol.Required(CONF_RAW, default=self._last_inject.get(CONF_RAW, "")): selector.TextSelector(selector.TextSelectorConfig())}
+        )
+        return self.async_show_form(step_id="decode_raw", data_schema=data_schema)
+
+    async def async_step_decode_raw_res(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Decode BLE ADV messages result step."""
+        conf = '\n    ("' + '",\n    "'.join(self._decode_res) + '")'
+        return self.async_show_menu(step_id="decode_raw_res", menu_options=["decode_raw", "tools"], description_placeholders={"conf": conf})
+
+    async def async_step_manual(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Manual input step."""
+        if user_input is not None:
+            if CONF_PARAMS in user_input:
+                codec_id = user_input[CONF_CODEC_ID_OLD]
+                params = user_input[CONF_PARAMS]
+            else:
+                codec_id_old = user_input.pop(CONF_CODEC_ID_OLD)
+                (codec_id, params) = DYN_CODEC_PARAM_MAP.get(codec_id_old, (codec_id_old, []))
+            codec = _CodecConfig(codec_id, int(f"0x{user_input[CONF_FORCED_ID]}", 16), int(user_input[CONF_INDEX]), params)
+            self._confs = BleAdvConfigHandler({user_input[CONF_ADAPTER_ID]: [codec]})
+            self.add_diag(f"Step Manual - confs: {self._confs}")
+            return await self.async_step_blink()
+
+        self.add_diag("Step Manual")
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_ADAPTER_ID): vol.In(self.coordinator.get_adapter_ids()),
+                vol.Required(CONF_CODEC_ID_OLD): vol.In(sorted(set(DYN_CODEC_PARAM_MAP.keys()).union(set(self.coordinator.codecs.keys())))),
+                vol.Optional(CONF_PARAMS): selector.ObjectSelector(selector.ObjectSelectorConfig()),
+                vol.Required(CONF_FORCED_ID): selector.TextSelector(selector.TextSelectorConfig(prefix="0x")),
+                vol.Required(CONF_INDEX): selector.NumberSelector(
+                    selector.NumberSelectorConfig(step=1, min=0, max=255, mode=selector.NumberSelectorMode.BOX)
+                ),
+            }
+        )
+
+        return self.async_show_form(step_id="manual", data_schema=data_schema)
+
+    async def async_step_pair(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Pair Step."""
+        if user_input is not None:
+            gen_id = randint(0xFF, 0xFFF5)
+            codecs = [_CodecConfig(codec_id, gen_id, 1, params) for codec_id, params in PHONE_APPS[user_input[CONF_PHONE_APP]]]
+            self._confs = BleAdvConfigHandler({user_input[CONF_ADAPTER_ID]: codecs})
+            self.add_diag(f"Step Pair - confs: {self._confs}")
+            return await self.async_step_wait_pair()
+
+        self.add_diag("Step Pair")
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_ADAPTER_ID): vol.In(self.coordinator.get_adapter_ids()),
+                vol.Required(CONF_PHONE_APP): vol.In(list(PHONE_APPS.keys())),
+            }
+        )
+        return self.async_show_form(step_id="pair", data_schema=data_schema)
+
+    async def async_step_wait_pair(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Effective Pair Step."""
+        if self._progress is None:
+            self._progress = BleAdvProgressFlow(self, "wait_pair", self.async_pair_all)
+        if (flow_res := self._progress.next()) is not None:
+            return flow_res
+        self._progress = None
+        return self.async_show_progress_done(next_step_id="confirm_pair")
+
+    async def async_step_confirm_pair(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Handle the confirm that pair worked OK."""
+        return self.async_show_menu(step_id="confirm_pair", menu_options=["pair", "confirm_no_abort", "blink"])
+
+    async def async_step_wait_config(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Wait for listened config Step."""
+        if self._progress is None:
+            self._progress = BleAdvWaitConfigProgress(self, "wait_config", WAIT_MAX_SECONDS, 3, True)
+        if (flow_res := self._progress.next()) is not None:
+            return flow_res
+        self._confs = BleAdvConfigHandler(cast("BleAdvWaitConfigProgress", self._progress).configs)
+        self.add_diag(f"Wait Config - Raw advs: {[x.hex().upper() for x in self.coordinator.listened_raw_advs]}")
+        self.add_diag(f"Wait Config - Confs: {self._confs}")
+        self._progress = None
+        return self.async_show_progress_done(next_step_id="no_config" if self._confs.is_empty() else "choose_adapter")
+
+    async def async_step_no_config(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """No Config found, abort or retry."""
+        return self.async_show_menu(step_id="no_config", menu_options=["wait_config", "abort_config", "open_issue"])
+
+    async def async_step_abort_config(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """No Config found, abort."""
+        return self.async_abort(reason="no_config")
+
+    async def async_step_choose_adapter(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Choose adapter."""
+        if len(self._confs.adapters) != 1:
+            if user_input is not None:
+                self._confs.set_selected_adapter(user_input[CONF_ADAPTER_ID])
+                return await self.async_step_blink()
+
+            self.add_diag("Selecting adapter.")
+            data_schema = vol.Schema({vol.Required(CONF_ADAPTER_ID): vol.In(self._confs.adapters)})
+            return self.async_show_form(step_id="choose_adapter", data_schema=data_schema)
+
+        return await self.async_step_blink()
+
+    async def async_step_blink(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Blink Step."""
+        return await (self.async_step_test_fan() if self._test_with_fan else self.async_step_test_light())
+
+    async def async_step_test_light(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Test Light Step."""
+        if self._progress is None:
+            self._progress = BleAdvProgressFlow(self, "test_light", self.async_test_light, self._confs.placeholders())
+        if (flow_res := self._progress.next()) is not None:
+            return flow_res
+        self._progress = None
+        return self.async_show_progress_done(next_step_id="confirm_light")
+
+    async def async_step_confirm_light(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Confirm choice after Light test Step."""
+        varying_choices = ["confirm_no_another"] if self._confs.has_next() else ["confirm_no_abort", "open_issue"]
+        opts = ["confirm_yes", *varying_choices, "confirm_retry_last", "confirm_retry_all", "confirm_test_fan"]
+        return self.async_show_menu(step_id="confirm_light", menu_options=opts, description_placeholders=self._confs.placeholders())
+
+    async def async_step_test_fan(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Test Fan Step."""
+        if self._progress is None:
+            self._progress = BleAdvProgressFlow(self, "test_fan", self.async_test_fan, self._confs.placeholders())
+        if (flow_res := self._progress.next()) is not None:
+            return flow_res
+        self._progress = None
+        return self.async_show_progress_done(next_step_id="confirm_fan")
+
+    async def async_step_confirm_fan(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Confirm choice after Fan test Step."""
+        varying_choices = ["confirm_no_another"] if self._confs.has_next() else ["confirm_no_abort", "open_issue"]
+        opts = ["confirm_yes", *varying_choices, "confirm_retry_last", "confirm_retry_all"]
+        return self.async_show_menu(step_id="confirm_fan", menu_options=opts, description_placeholders=self._confs.placeholders())
+
+    async def async_step_open_issue(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Open issue Step."""
+        self._return_step_after_diag = "open_issue"
+        ph = {"url": "https://github.com/NicoIIT/ha-ble-adv/issues/new?template=discovery.yml"}
+        return self.async_show_menu(step_id="open_issue", menu_options=["diag"], description_placeholders=ph)
+
+    async def async_step_confirm_yes(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Confirm YES Step."""
+        conf = self._confs.selected()
+        await self.async_set_unique_id(f"{conf.codec_id}##0x{conf.id:X}##{conf.index:d}", raise_on_progress=False)
+        self._abort_if_unique_id_configured()
+        codec: BleAdvCodec = self.coordinator.codecs[conf.codec_id]
+        self._data = {
+            CONF_DEVICE: {CONF_CODEC_ID: conf.codec_id, CONF_FORCED_ID: conf.id, CONF_INDEX: conf.index, CONF_PARAMS: conf.codec_params},
+            CONF_LIGHTS: [{}] * CONF_MAX_ENTITY_NB,
+            CONF_FANS: [{}] * CONF_MAX_ENTITY_NB,
+            CONF_REMOTES: [],
+            CONF_TECHNICAL: {
+                CONF_ADAPTER_IDS: [self._confs.selected_adapter()],
+                CONF_DURATION: codec.duration,
+                CONF_INTERVAL: codec.interval,
+                CONF_REPEATS: codec.repeat,
+            },
+        }
+        return await self.async_step_configure()
+
+    async def async_step_confirm_no_another(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Confirm NO, try another Step."""
+        self._confs.next()
+        return await self.async_step_blink()
+
+    async def async_step_confirm_no_abort(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Confirm NO, abort Step."""
+        return self.async_abort(reason="no_config")
+
+    async def async_step_confirm_retry_last(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Confirm Retry Step."""
+        return await self.async_step_blink()
+
+    async def async_step_confirm_retry_all(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Confirm Retry ALL Step."""
+        self._confs.reset_selected()
+        return await self.async_step_choose_adapter()
+
+    async def async_step_confirm_test_fan(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Confirm Test with Fan Step."""
+        self._test_with_fan = True
+        self._confs.reset_selected()
+        return await self.async_step_choose_adapter()
+
+    async def async_step_configure(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Configure choice Step."""
+        opts = ["config_entities", "config_remotes", "config_technical", "finalize"]
+        return self.async_show_menu(step_id="configure", menu_options=opts)
+
+    def _has_one_entity(self) -> bool:
+        return any(x.get(CONF_TYPE, CONF_TYPE_NONE) != CONF_TYPE_NONE for x in [*self._data[CONF_LIGHTS], *self._data[CONF_FANS]])
+
+    async def async_step_config_entities(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Configure Entities Step."""
+        errors = {}
+        if user_input is not None:
+            self._data[CONF_LIGHTS] = self._convert_to_list(LIGHT_TYPE, user_input)
+            self._data[CONF_FANS] = self._convert_to_list(FAN_TYPE, user_input)
+            if self._has_one_entity():
+                if self._finalize_requested:
+                    return await self.async_step_finalize()
+                return await self.async_step_configure()
+            errors["base"] = "missing_entity"
+
+        codec: BleAdvCodec = self.coordinator.codecs[self._data[CONF_DEVICE][CONF_CODEC_ID]]
+        sections: dict[str, tuple[dict[vol.Schemable, Any], bool]] = {}
+        forced_cmds = [CONF_FORCED_ON, CONF_FORCED_OFF]
+        tr_set: str = self._data[CONF_TECHNICAL].get(CONF_TRANS_SET, BleAdvCodec.DEF_TRANS_NAME)
+
+        # Build one section for each Light supported by the codec
+        for i, feats in enumerate(codec.get_supported_features(LIGHT_TYPE, tr_set)):
+            if ATTR_SUB_TYPE in feats:
+                opts = self._data[CONF_LIGHTS][i]
+                types = [*feats[ATTR_SUB_TYPE], CONF_TYPE_NONE]
+                schema_opts: dict[vol.Schemable, Any] = {
+                    vol.Required(CONF_TYPE, default=opts.get(CONF_TYPE, CONF_TYPE_NONE)): self._get_selector(LIGHT_TYPE, types),
+                }
+                if LIGHT_TYPE_CWW in types or LIGHT_TYPE_RGB in types:
+                    schema_opts[vol.Required(CONF_MIN_BRIGHTNESS, default=opts.get(CONF_MIN_BRIGHTNESS, 3))] = selector.NumberSelector(
+                        selector.NumberSelectorConfig(step=1, min=1, max=15, mode=selector.NumberSelectorMode.BOX)
+                    )
+                    schema_opts[vol.Required(CONF_REFRESH_ON_START, default=opts.get(CONF_REFRESH_ON_START, False))] = bool
+                if LIGHT_TYPE_CWW in types:
+                    schema_opts[vol.Required(CONF_REVERSED, default=opts.get(CONF_REVERSED, False))] = bool
+                schema_opts[vol.Required(CONF_FORCED_CMDS, default=opts.get(CONF_FORCED_CMDS, []))] = self._get_multi_selector(
+                    CONF_FORCED_CMDS, forced_cmds
+                )
+                if ATTR_EFFECT in feats:
+                    effects = feats[ATTR_EFFECT]
+                    def_effects = [eff for eff in opts.get(CONF_EFFECTS, effects) if eff in effects]
+                    schema_opts[vol.Required(CONF_EFFECTS, default=def_effects)] = self._get_multi_selector(CONF_EFFECTS, list(effects))
+                sections[f"{LIGHT_TYPE}_{i}"] = (schema_opts, CONF_TYPE in opts or (not self._test_with_fan and i == 0))
+
+        # Build one section for each Fan supported by the codec
+        for i, feats in enumerate(codec.get_supported_features(FAN_TYPE, tr_set)):
+            if ATTR_SPEED_COUNT in feats:
+                opts = self._data[CONF_FANS][i]
+                # keep backward compatibility for 'type', but a refactor of the UI with the speed count as input
+                # would be better and more easily maintainable
+                types = [*[f"{x}speed" for x in feats[ATTR_SPEED_COUNT]], CONF_TYPE_NONE]
+                schema_opts: dict[vol.Schemable, Any] = {
+                    vol.Required(CONF_TYPE, default=opts.get(CONF_TYPE, CONF_TYPE_NONE)): self._get_selector(FAN_TYPE, types),
+                }
+                if ATTR_DIR in feats:
+                    schema_opts[vol.Required(CONF_USE_DIR, default=opts.get(CONF_USE_DIR, True))] = bool
+                    schema_opts[vol.Required(CONF_REFRESH_DIR_ON_START, default=opts.get(CONF_REFRESH_DIR_ON_START, False))] = bool
+                if ATTR_OSC in feats:
+                    schema_opts[vol.Required(CONF_USE_OSC, default=opts.get(CONF_USE_OSC, True))] = bool
+                    schema_opts[vol.Required(CONF_REFRESH_OSC_ON_START, default=opts.get(CONF_REFRESH_OSC_ON_START, False))] = bool
+                schema_opts[vol.Required(CONF_FORCED_CMDS, default=opts.get(CONF_FORCED_CMDS, []))] = self._get_multi_selector(
+                    CONF_FORCED_CMDS, forced_cmds
+                )
+                if ATTR_PRESET in feats:
+                    presets = feats[ATTR_PRESET]
+                    def_presets = [preset for preset in opts.get(CONF_PRESETS, presets) if preset in presets]
+                    schema_opts[vol.Required(CONF_PRESETS, default=def_presets)] = self._get_multi_selector(CONF_PRESETS, list(presets))
+                sections[f"{FAN_TYPE}_{i}"] = (schema_opts, CONF_TYPE in opts or (self._test_with_fan and i == 0))
+
+        # Finalize schema with all sections
+        data_schema = vol.Schema(
+            {vol.Required(name): section(vol.Schema(sect), {"collapsed": not visible}) for name, (sect, visible) in sections.items()}
+        )
+
+        return self.async_show_form(step_id="config_entities", data_schema=data_schema, errors=errors)
+
+    async def async_step_config_remotes(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Configure Remotes: launch add of new remote if no one existing, else select existing / new remote."""
+        self._progress = None
+        self._remote_index = 0
+        if not self._data[CONF_REMOTES]:
+            return await self.async_step_wait_config_remote()
+
+        avail_remotes = {rc.get(CONF_NAME): i for i, rc in enumerate(self._data[CONF_REMOTES])}
+        rems = [*avail_remotes.keys(), "new"]
+
+        if user_input is not None:
+            if user_input[CONF_REMOTE] == "new":
+                return await self.async_step_wait_config_remote()
+            self._remote_index = avail_remotes[user_input[CONF_REMOTE]]
+            return await self.async_step_config_remote()
+
+        data_schema = vol.Schema({vol.Required(CONF_REMOTE, default=rems[0]): self._get_selector(CONF_REMOTE, rems)})
+        return self.async_show_form(step_id="config_remotes", data_schema=data_schema)
+
+    async def async_step_config_remote(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Configure existing Remote."""
+        return self.async_show_menu(
+            step_id="config_remote",
+            menu_options=["config_remote_delete", "config_remote_update", "configure"],
+            description_placeholders=self._remote_conf_placeholders(),
+        )
+
+    async def async_step_config_remote_delete(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Remove Remote."""
+        del self._data[CONF_REMOTES][self._remote_index]
+        return await self.async_step_configure()
+
+    async def async_step_wait_config_remote(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Configure New Remote."""
+        if self._progress is None:
+            self._progress = BleAdvWaitConfigProgress(self, "wait_config_remote", WAIT_MAX_SECONDS)
+        if (flow_res := self._progress.next()) is not None:
+            return flow_res
+        self._confs = BleAdvConfigHandler(cast("BleAdvWaitConfigProgress", self._progress).configs)
+        self._progress = None
+        if self._confs.is_empty():
+            return self.async_show_progress_done(next_step_id="configure")
+        config = self._confs.selected()  # get the first found adapter/config
+        self._data[CONF_REMOTES].append(
+            {
+                CONF_CODEC_ID: config.codec_id,
+                CONF_FORCED_ID: config.id,
+                CONF_INDEX: config.index,
+                CONF_PARAMS: config.codec_params,
+                CONF_PAIRED: True,
+                CONF_TRANS_SET: BleAdvCodec.DEF_TRANS_NAME,
+                CONF_NAME: f"{config.codec_id}##0x{config.id:X}##{config.index:d}",
+            }
+        )
+        return self.async_show_progress_done(next_step_id="config_remote_update")
+
+    async def async_step_config_remote_update(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Update Remote Options."""
+        data_rem = self._data[CONF_REMOTES][self._remote_index]
+        if user_input is not None:
+            data_rem[CONF_TRANS_SET] = user_input[CONF_TRANS_SET]
+            data_rem[CONF_PAIRED] = user_input[CONF_PAIRED]
+            data_rem[CONF_NAME] = user_input[CONF_NAME]
+            return await self.async_step_configure()
+
+        codec: BleAdvCodec = self.coordinator.codecs[data_rem[CONF_CODEC_ID]]
+        avail_tr_set = list(codec.get_translator_sets().keys())
+        def_tr_set = data_rem[CONF_TRANS_SET] if data_rem[CONF_TRANS_SET] in avail_tr_set else BleAdvCodec.DEF_TRANS_NAME
+
+        return self.async_show_form(
+            step_id="config_remote_update",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_NAME, default=data_rem[CONF_NAME]): str,
+                    vol.Required(CONF_TRANS_SET, default=def_tr_set): self._get_selector(CONF_TRANS_SET, avail_tr_set),
+                    vol.Required(CONF_PAIRED, default=data_rem[CONF_PAIRED]): bool,
+                }
+            ),
+            description_placeholders=self._remote_conf_placeholders(),
+        )
+
+    async def async_step_config_technical(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Configure Technical."""
+        errors = {}
+        def_tr_set = self._data[CONF_TECHNICAL].get(CONF_TRANS_SET, BleAdvCodec.DEF_TRANS_NAME)
+        if user_input is not None:
+            self._data[CONF_TECHNICAL] = user_input
+            if len(self._data[CONF_TECHNICAL][CONF_ADAPTER_IDS]) > 0:
+                if def_tr_set != user_input[CONF_TRANS_SET]:
+                    return await self.async_step_config_entities()
+                return await self.async_step_configure()
+            errors["base"] = "missing_adapter"
+
+        def_tech = self._data[CONF_TECHNICAL]
+        avail_adapters = self.coordinator.get_adapter_ids()
+        def_adapters = [adapt for adapt in def_tech[CONF_ADAPTER_IDS] if adapt in avail_adapters]
+        codec: BleAdvCodec = self.coordinator.codecs[self._data[CONF_DEVICE][CONF_CODEC_ID]]
+        avail_tr_set = list(codec.get_translator_sets().keys())
+        def_tr_set = def_tr_set if def_tr_set in avail_tr_set else BleAdvCodec.DEF_TRANS_NAME
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_ADAPTER_IDS, default=def_adapters): self._get_multi_selector(CONF_ADAPTER_IDS, avail_adapters),
+                vol.Required(CONF_TRANS_SET, default=def_tr_set): self._get_selector(CONF_TRANS_SET, avail_tr_set),
+                vol.Optional(CONF_DURATION, default=def_tech[CONF_DURATION]): selector.NumberSelector(
+                    selector.NumberSelectorConfig(step=50, min=100, max=2000, mode=selector.NumberSelectorMode.SLIDER)
+                ),
+                vol.Optional(CONF_INTERVAL, default=def_tech[CONF_INTERVAL]): selector.NumberSelector(
+                    selector.NumberSelectorConfig(step=10, min=10, max=150, mode=selector.NumberSelectorMode.BOX)
+                ),
+                vol.Optional(CONF_REPEATS, default=def_tech[CONF_REPEATS]): selector.NumberSelector(
+                    selector.NumberSelectorConfig(step=1, min=1, max=20, mode=selector.NumberSelectorMode.BOX)
+                ),
+            }
+        )
+        return self.async_show_form(step_id="config_technical", data_schema=data_schema, errors=errors)
+
+    async def async_step_finalize(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Finalize Step."""
+        if not self._has_one_entity():
+            self._finalize_requested = True
+            return await self.async_step_config_entities()
+
+        if self.source == SOURCE_RECONFIGURE:
+            return self.async_update_reload_and_abort(self._get_reconfigure_entry(), data_updates=self._data)
+
+        if user_input is not None:
+            return self.async_create_entry(title=user_input[CONF_NAME], data=self._data)
+
+        return self.async_show_form(step_id="finalize", data_schema=vol.Schema({vol.Required(CONF_NAME): str}))
+
+    async def async_step_reconfigure(self, _: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Reconfigure Step."""
+        self.add_diag("'Reconfigure' flow started")
+        self.coordinator = await get_coordinator(self.hass)
+        self._data = {**self._get_reconfigure_entry().data}
+        return await self.async_step_configure()
+
+    def _convert_to_list(self, ent_type: str, user_input: dict[str, Any]) -> list[Any]:
+        """Convert from {'ligth_0':{opts0}, 'ligth_1':{opts1},, ...] to [{opts0}, {opts1}, ...]."""
+        return [
+            x if x is not None and x.get(CONF_TYPE) != CONF_TYPE_NONE else {}
+            for x in [user_input.get(f"{ent_type}_{i}") for i in range(CONF_MAX_ENTITY_NB)]
+        ]
+
+    def _get_selector(self, key: str, types: list[str]) -> selector.SelectSelector:
+        return selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                translation_key=key,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+                options=types,
+            )
+        )
+
+    def _get_multi_selector(self, key: str, types: list[str]) -> selector.SelectSelector:
+        return selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                translation_key=key,
+                mode=selector.SelectSelectorMode.LIST,
+                options=types,
+                multiple=True,
+            )
+        )

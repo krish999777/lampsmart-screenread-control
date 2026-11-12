@@ -1,0 +1,43 @@
+"""Config flow tests."""
+
+# ruff: noqa: S101
+from unittest import mock
+
+import pytest
+from ble_adv.const import CONF_APPLE_INC_UUIDS, CONF_GOOGLE_LCC_UUIDS
+from ble_adv.diagnostics import async_get_config_entry_diagnostics
+from homeassistant.core import HomeAssistant
+
+
+@pytest.mark.usefixtures("coord")
+async def test_diagnostics(hass: HomeAssistant) -> None:
+    """Test diagnostics."""
+    config_entry = mock.AsyncMock()
+    config_entry.data = {"conf_data": "data"}
+    diag = await async_get_config_entry_diagnostics(hass, config_entry)
+    # remove variable info
+    diag["coordinator"]["bt_managers"]["esp"]["logs"].clear()
+    diag["coordinator"]["bt_managers"]["hci"]["logs"].clear()
+    diag["coordinator"]["bt_managers"]["hci"]["supported_by_host"] = True
+    diag["coordinator"]["bt_managers"]["shl"]["logs"].clear()
+    diag["coordinator"]["logs"].clear()
+    assert diag == {
+        "coordinator": {
+            "bt_managers": {
+                "hci": {"adapters": {}, "ids": {}, "logs": [], "supported_by_host": True},
+                "esp": {"adapters": {}, "ids": {}, "logs": []},
+                "shl": {"adapters": {}, "ids": {}, "logs": []},
+            },
+            "ign_adapters": ["hci"],
+            "ign_duration": 60000,
+            "ign_cids": list({*CONF_GOOGLE_LCC_UUIDS, *CONF_APPLE_INC_UUIDS}),
+            "ign_macs": [],
+            "keep_recv": 100,
+            "maintainer_menus": False,
+            "adapter_macs": [],
+            "last_dec_raw": {},
+            "last_unk_raw": {},
+            "logs": [],
+        },
+        "entry_data": config_entry.data,
+    }
