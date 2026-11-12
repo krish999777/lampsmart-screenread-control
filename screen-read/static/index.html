@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Screen-Read — Automatic Light Sync</title>
+  <style>
+    :root {
+      --bg: #0a0e16;
+      --card: #131a29;
+      --border: rgba(148, 163, 184, 0.16);
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #3b82f6;
+      --ok: #22c55e;
+      --err: #ef4444;
+      --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 20px 16px 40px;
+    }
+    .wrap { max-width: 620px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+    .header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    h1 { margin: 0; font-size: 1.25rem; }
+    .sub { margin: 3px 0 0; font-size: 0.82rem; color: var(--muted); }
+    .pill {
+      padding: 5px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 700;
+      border: 1px solid var(--border);
+    }
+    .pill-active { background: rgba(34, 197, 94, 0.16); color: #4ade80; border-color: rgba(34, 197, 94, 0.4); }
+    .pill-paused { background: rgba(148, 163, 184, 0.14); color: #cbd5e1; }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 16px;
+    }
+    .card h2 { margin: 0 0 10px; font-size: 1rem; }
+    .control-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .btn {
+      border: none; border-radius: 12px; padding: 11px 18px; font-size: 0.9rem; font-weight: 650;
+      cursor: pointer;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-start { background: var(--ok); color: #052e16; }
+    .btn-stop { background: var(--err); color: #fff; }
+    .btn-secondary { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+    .meters { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 12px; }
+    .meter-box {
+      background: rgba(10, 14, 22, 0.65); border: 1px solid var(--border); border-radius: 12px; padding: 12px;
+    }
+    .meter-label { font-size: 0.75rem; color: var(--muted); }
+    .meter-val { font-size: 1.6rem; font-weight: 750; margin: 4px 0; }
+    .bar-track { height: 8px; background: rgba(255,255,255,0.1); border-radius: 999px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 999px; transition: width 0.25s ease; }
+    .bar-screen { background: #38bdf8; }
+    .bar-light { background: #fbbf24; }
+    canvas { width: 100%; height: 96px; display: block; border-radius: 10px; background: rgba(10,14,22,0.65); }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+    .field-head { display: flex; justify-content: space-between; font-size: 0.85rem; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    input[type="text"], input[type="number"] {
+      width: 100%; padding: 9px 11px; border-radius: 10px;
+      border: 1px solid var(--border); background: #0a0e16; color: var(--text); font-size: 0.9rem;
+    }
+    .split { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .checkbox { display: flex; align-items: center; gap: 8px; font-size: 0.86rem; margin-bottom: 12px; }
+    .err-box {
+      background: rgba(239,68,68,0.14); border: 1px solid rgba(239,68,68,0.4);
+      color: #fecaca; padding: 10px 12px; border-radius: 12px; font-size: 0.84rem;
+    }
+    .stats-line { font-size: 0.78rem; color: var(--muted); margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <h1>Screen-Read Light Sync</h1>
+        <p class="sub">Direct 250ms screen luminance sync to your ESP32 lamp.</p>
+      </div>
+      <span id="statusPill" class="pill pill-paused">Checking...</span>
+    </div>
+
+    <div class="card">
+      <div class="control-row">
+        <button id="startBtn" class="btn btn-start" type="button">Start Sync</button>
+        <button id="stopBtn" class="btn btn-stop" type="button">Stop Sync</button>
+        <button id="pingBtn" class="btn btn-secondary" type="button">Test ESP32</button>
+        <span id="espBadge" class="sub"></span>
+      </div>
+      <div id="errBox" class="err-box" style="display:none;margin-top:12px;"></div>
+    </div>
+
+    <div class="card">
+      <h2>Live Brightness Telemetry</h2>
+      <div class="meters">
+        <div class="meter-box">
+          <div class="meter-label">Measured Screen Visual Brightness</div>
+          <div id="screenVal" class="meter-val">--%</div>
+          <div class="bar-track"><div id="screenBar" class="bar-fill bar-screen" style="width:0%"></div></div>
+        </div>
+        <div class="meter-box">
+          <div class="meter-label">Room Light Brightness (Sent)</div>
+          <div id="lightVal" class="meter-val">--%</div>
+          <div class="bar-track"><div id="lightBar" class="bar-fill bar-light" style="width:0%"></div></div>
+        </div>
+      </div>
+      <canvas id="chart" width="580" height="96"></canvas>
+      <div id="statsLine" class="stats-line">Samples: 0 · Updates sent: 0</div>
+    </div>
+
+    <div class="card">
+      <h2>Synchronization Settings</h2>
+      <form id="cfgForm">
+        <div class="field">
+          <div class="field-head">
+            <span>Sensitivity (lower change threshold = higher responsiveness)</span>
+            <strong id="sensOut">75%</strong>
+          </div>
+          <input id="sensitivity" type="range" min="1" max="100" value="75" />
+        </div>
+
+        <div class="split">
+          <div class="field">
+            <div class="field-head">
+              <span>Min Room Brightness</span>
+              <strong id="minOut">10%</strong>
+            </div>
+            <input id="minBrightness" type="range" min="1" max="100" value="10" />
+          </div>
+          <div class="field">
+            <div class="field-head">
+              <span>Max Room Brightness</span>
+              <strong id="maxOut">95%</strong>
+            </div>
+            <input id="maxBrightness" type="range" min="1" max="100" value="95" />
+          </div>
+        </div>
+
+        <div class="split">
+          <div class="field">
+            <span class="meter-label">ESP32 API Base URL</span>
+            <input id="esp32Url" type="text" value="http://lampsmart.local" />
+          </div>
+          <div class="field">
+            <span class="meter-label">Check Interval (ms)</span>
+            <input id="intervalMs" type="number" min="100" max="10000" step="50" value="250" />
+          </div>
+        </div>
+
+        <label class="checkbox">
+          <input id="dryRun" type="checkbox" />
+          <span>Dry-run mode (measure screen without sending HTTP requests to ESP32)</span>
+        </label>
+
+        <button class="btn btn-secondary" type="submit">Apply Settings</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let dirtyForm = false;
+
+    ['sensitivity', 'minBrightness', 'maxBrightness', 'esp32Url', 'intervalMs', 'dryRun'].forEach((id) => {
+      $(id).addEventListener('input', () => { dirtyForm = true; });
+      $(id).addEventListener('change', () => { dirtyForm = true; });
+    });
+
+    $('sensitivity').oninput = () => { $('sensOut').textContent = $('sensitivity').value + '%'; };
+    $('minBrightness').oninput = () => {
+      if (Number($('minBrightness').value) > Number($('maxBrightness').value)) {
+        $('maxBrightness').value = $('minBrightness').value;
+        $('maxOut').textContent = $('maxBrightness').value + '%';
+      }
+      $('minOut').textContent = $('minBrightness').value + '%';
+    };
+    $('maxBrightness').oninput = () => {
+      if (Number($('maxBrightness').value) < Number($('minBrightness').value)) {
+        $('minBrightness').value = $('maxBrightness').value;
+        $('minOut').textContent = $('minBrightness').value + '%';
+      }
+      $('maxOut').textContent = $('maxBrightness').value + '%';
+    };
+
+    function drawChart(history) {
+      const c = $('chart');
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, c.width, c.height);
+      if (!history || history.length < 2) return;
+
+      const drawLine = (key, color) => {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        history.forEach((pt, idx) => {
+          const x = (idx / Math.max(1, history.length - 1)) * (c.width - 12) + 6;
+          const y = c.height - 8 - ((pt[key] || 0) / 100) * (c.height - 16);
+          if (idx === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      };
+      drawLine('screen', '#38bdf8');
+      drawLine('light', '#fbbf24');
+    }
+
+    function render(data) {
+      const pill = $('statusPill');
+      pill.textContent = data.active ? 'SYNC ACTIVE' : 'STOPPED';
+      pill.className = 'pill ' + (data.active ? 'pill-active' : 'pill-paused');
+      $('startBtn').disabled = data.active;
+      $('stopBtn').disabled = !data.active;
+
+      const m = data.metrics;
+      $('screenVal').textContent = m.screenBrightness !== null ? m.screenBrightness.toFixed(1) + '%' : '--%';
+      $('screenBar').style.width = (m.screenBrightness || 0) + '%';
+      $('lightVal').textContent = m.lastSentBrightness !== null ? m.lastSentBrightness + '%' : '--%';
+      $('lightBar').style.width = (m.lastSentBrightness || 0) + '%';
+
+      $('statsLine').textContent = `Samples: ${m.samplesTaken} · Light updates sent: ${m.updatesSent}` +
+        (m.targetBrightness !== null ? ` · Target: ${m.targetBrightness.toFixed(1)}%` : '');
+
+      if (m.esp32Reachable === true) $('espBadge').textContent = 'ESP32 reachable';
+      else if (m.esp32Reachable === false) $('espBadge').textContent = 'ESP32 offline';
+      else $('espBadge').textContent = '';
+
+      if (m.lastError) {
+        $('errBox').style.display = 'block';
+        $('errBox').textContent = m.lastError;
+      } else {
+        $('errBox').style.display = 'none';
+      }
+
+      if (!dirtyForm) {
+        $('sensitivity').value = data.config.sensitivity;
+        $('sensOut').textContent = data.config.sensitivity + '%';
+        $('minBrightness').value = data.config.minBrightness;
+        $('minOut').textContent = data.config.minBrightness + '%';
+        $('maxBrightness').value = data.config.maxBrightness;
+        $('maxOut').textContent = data.config.maxBrightness + '%';
+        $('esp32Url').value = data.config.esp32Url;
+        $('intervalMs').value = data.config.intervalMs;
+        $('dryRun').checked = data.config.dryRun;
+      }
+
+      drawChart(data.history);
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch('/api/status');
+        render(await res.json());
+      } catch (e) {
+        $('errBox').style.display = 'block';
+        $('errBox').textContent = 'Local screen-read server disconnected';
+      }
+    }
+
+    $('startBtn').onclick = async () => {
+      await fetch('/api/sync/start', { method: 'POST' });
+      await refresh();
+    };
+    $('stopBtn').onclick = async () => {
+      await fetch('/api/sync/stop', { method: 'POST' });
+      await refresh();
+    };
+    $('pingBtn').onclick = async () => {
+      const r = await fetch('/api/esp32/ping');
+      const d = await r.json();
+      $('espBadge').textContent = d.ok ? 'ESP32 reachable' : 'ESP32 offline: ' + d.error;
+    };
+    $('cfgForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const body = {
+        sensitivity: Number($('sensitivity').value),
+        minBrightness: Number($('minBrightness').value),
+        maxBrightness: Number($('maxBrightness').value),
+        esp32Url: $('esp32Url').value.trim(),
+        intervalMs: Number($('intervalMs').value),
+        dryRun: $('dryRun').checked,
+      };
+      const r = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const res = await r.json();
+      if (!res.ok) {
+        $('errBox').style.display = 'block';
+        $('errBox').textContent = res.error;
+      } else {
+        dirtyForm = false;
+        await refresh();
+      }
+    };
+
+    refresh();
+    setInterval(refresh, 300);
+  </script>
+</body>
+</html>

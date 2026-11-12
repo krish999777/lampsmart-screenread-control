@@ -1,5 +1,6 @@
 # Secrets
 firmware/include/wifi_secrets.h
+screen-read/config.json
 
 # Build & tool artifacts
 firmware/.pio/
@@ -7,6 +8,9 @@ firmware/.venv/
 firmware/data/
 web/node_modules/
 web/dist/
+screen-read/mac_screen_lum
+screen-read/__pycache__/
+screen-read/**/__pycache__/
 references/**/.dart_tool/
 references/**/build/
 .DS_Store

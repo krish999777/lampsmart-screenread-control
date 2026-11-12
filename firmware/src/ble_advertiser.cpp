@@ -213,7 +213,7 @@ bool BleAdvertiser::transmitSequence(
   auto sleepInterruptible = [&](uint16_t totalMs, uint16_t minFloorMs) -> bool {
     uint32_t elapsed = 0;
     while (elapsed < totalMs) {
-      const uint32_t step = (totalMs - elapsed > 20) ? 20 : (totalMs - elapsed);
+      const uint32_t step = (totalMs - elapsed > 10) ? 10 : (totalMs - elapsed);
       vTaskDelay(pdMS_TO_TICKS(step));
       elapsed += step;
       if (elapsed >= minFloorMs && shouldPreempt && shouldPreempt()) {
@@ -236,8 +236,8 @@ bool BleAdvertiser::transmitSequence(
       onFirstStarted(true, "");
     }
 
-    // Keep each window active for at least 80ms before honoring preemption.
-    const uint16_t minFloor = (i == 0) ? 80 : 40;
+    // Keep each window active for at least 25ms (>=1 BLE 20ms adv interval) before honoring preemption.
+    const uint16_t minFloor = 25;
     if (sleepInterruptible(winMs, minFloor)) {
       wasPreempted = true;
       stopAdvertising();
